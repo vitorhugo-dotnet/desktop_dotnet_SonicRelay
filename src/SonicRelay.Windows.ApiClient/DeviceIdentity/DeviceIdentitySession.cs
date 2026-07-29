@@ -17,7 +17,7 @@ public sealed class DeviceIdentitySession : IDeviceAccessTokenProvider, IDisposa
     private readonly SemaphoreSlim gate = new(1, 1);
     private string? accessToken;
     private DateTimeOffset accessTokenExpiresAt;
-    private int accessTokenGeneration;
+    private TokenExchange? tokenExchange;
 
     public DeviceIdentitySession(
         IDeviceIdentityApiClient apiClient,
@@ -38,15 +38,49 @@ public sealed class DeviceIdentitySession : IDeviceAccessTokenProvider, IDisposa
             return accessToken!;
         }
 
-        var observedGeneration = accessTokenGeneration;
         await gate.WaitAsync(cancellationToken);
+        Task<string> exchange;
         try
         {
-            if (HasUsableCachedToken() && (!forceRefresh || accessTokenGeneration > observedGeneration))
+            if (!forceRefresh && HasUsableCachedToken())
             {
                 return accessToken!;
             }
 
+            exchange = tokenExchange?.Completion ?? StartTokenExchange(cancellationToken);
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        return await exchange.WaitAsync(cancellationToken);
+    }
+
+    public void Dispose() => gate.Dispose();
+
+    private bool HasUsableCachedToken() =>
+        !string.IsNullOrWhiteSpace(accessToken)
+        && accessTokenExpiresAt > timeProvider.GetUtcNow().Add(ExpiryMargin);
+
+    private void ClearCachedToken()
+    {
+        accessToken = null;
+        accessTokenExpiresAt = default;
+    }
+
+    private Task<string> StartTokenExchange(CancellationToken cancellationToken)
+    {
+        var exchange = new TokenExchange();
+        tokenExchange = exchange;
+        exchange.Completion = ExchangeTokenAsync(exchange, cancellationToken);
+        return exchange.Completion;
+    }
+
+    private async Task<string> ExchangeTokenAsync(TokenExchange exchange, CancellationToken cancellationToken)
+    {
+        try
+        {
             var credential = await LoadOrBootstrapCredentialAsync(cancellationToken);
             DeviceTokenResponse token;
             try
@@ -64,25 +98,28 @@ public sealed class DeviceIdentitySession : IDeviceAccessTokenProvider, IDisposa
 
             accessToken = token.AccessToken;
             accessTokenExpiresAt = token.ExpiresAt;
-            accessTokenGeneration++;
             return accessToken;
         }
         finally
         {
-            gate.Release();
+            await gate.WaitAsync(CancellationToken.None);
+            try
+            {
+                if (ReferenceEquals(tokenExchange, exchange))
+                {
+                    tokenExchange = null;
+                }
+            }
+            finally
+            {
+                gate.Release();
+            }
         }
     }
 
-    public void Dispose() => gate.Dispose();
-
-    private bool HasUsableCachedToken() =>
-        !string.IsNullOrWhiteSpace(accessToken)
-        && accessTokenExpiresAt > timeProvider.GetUtcNow().Add(ExpiryMargin);
-
-    private void ClearCachedToken()
+    private sealed class TokenExchange
     {
-        accessToken = null;
-        accessTokenExpiresAt = default;
+        public Task<string> Completion { get; set; } = null!;
     }
 
     private async Task<DeviceCredential> LoadOrBootstrapCredentialAsync(CancellationToken cancellationToken)

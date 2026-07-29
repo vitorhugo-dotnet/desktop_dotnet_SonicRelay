@@ -122,6 +122,36 @@ public sealed class DeviceIdentitySessionTests
     }
 
     [Fact]
+    public async Task Concurrent_forced_callers_share_one_transport_failure()
+    {
+        var exchangeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseExchange = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var credential = StoredCredential();
+        var api = new StubDeviceIdentityApiClient
+        {
+            TokenHandler = async (_, _) =>
+            {
+                exchangeStarted.TrySetResult();
+                await releaseExchange.Task;
+                throw new ApiClientException(ApiErrorKind.NetworkUnavailable, "network unavailable");
+            }
+        };
+        var store = new MemoryDeviceCredentialStore(credential);
+        var session = CreateSession(api, store, new FakeTimeProvider(Now));
+
+        var failuresTask = Task.WhenAll(Enumerable.Range(0, 5).Select(async _ =>
+            await Assert.ThrowsAsync<ApiClientException>(() => session.GetAccessTokenAsync(forceRefresh: true))));
+        await exchangeStarted.Task;
+        releaseExchange.SetResult();
+        var failures = await failuresTask;
+
+        Assert.All(failures, error => Assert.Equal(ApiErrorKind.NetworkUnavailable, error.Kind));
+        Assert.Equal(1, api.TokenCalls);
+        Assert.Equal(credential, store.Credential);
+        Assert.Equal(0, api.BootstrapCalls);
+    }
+
+    [Fact]
     public async Task Unauthorized_token_exchange_clears_the_stored_credential()
     {
         var store = new MemoryDeviceCredentialStore(StoredCredential());
