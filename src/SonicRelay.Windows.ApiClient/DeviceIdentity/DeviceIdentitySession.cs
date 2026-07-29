@@ -17,6 +17,7 @@ public sealed class DeviceIdentitySession : IDeviceAccessTokenProvider, IDisposa
     private readonly SemaphoreSlim gate = new(1, 1);
     private string? accessToken;
     private DateTimeOffset accessTokenExpiresAt;
+    private int accessTokenGeneration;
 
     public DeviceIdentitySession(
         IDeviceIdentityApiClient apiClient,
@@ -37,10 +38,11 @@ public sealed class DeviceIdentitySession : IDeviceAccessTokenProvider, IDisposa
             return accessToken!;
         }
 
+        var observedGeneration = accessTokenGeneration;
         await gate.WaitAsync(cancellationToken);
         try
         {
-            if (!forceRefresh && HasUsableCachedToken())
+            if (HasUsableCachedToken() && (!forceRefresh || accessTokenGeneration > observedGeneration))
             {
                 return accessToken!;
             }
@@ -55,12 +57,14 @@ public sealed class DeviceIdentitySession : IDeviceAccessTokenProvider, IDisposa
             }
             catch (ApiClientException exception) when (exception.Kind == ApiErrorKind.Unauthorized)
             {
+                ClearCachedToken();
                 await ClearCredentialAsync(cancellationToken);
                 throw;
             }
 
             accessToken = token.AccessToken;
             accessTokenExpiresAt = token.ExpiresAt;
+            accessTokenGeneration++;
             return accessToken;
         }
         finally
@@ -74,6 +78,12 @@ public sealed class DeviceIdentitySession : IDeviceAccessTokenProvider, IDisposa
     private bool HasUsableCachedToken() =>
         !string.IsNullOrWhiteSpace(accessToken)
         && accessTokenExpiresAt > timeProvider.GetUtcNow().Add(ExpiryMargin);
+
+    private void ClearCachedToken()
+    {
+        accessToken = null;
+        accessTokenExpiresAt = default;
+    }
 
     private async Task<DeviceCredential> LoadOrBootstrapCredentialAsync(CancellationToken cancellationToken)
     {

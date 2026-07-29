@@ -51,7 +51,10 @@ public sealed class DeviceIdentitySessionTests
         var api = new StubDeviceIdentityApiClient
         {
             TokenResponses = new Queue<DeviceTokenResponse>(
-            [new DeviceTokenResponse("access-1", Now.AddSeconds(31)), new DeviceTokenResponse("access-2", Now.AddMinutes(5))])
+            [
+                new DeviceTokenResponse("access-1", Now.AddSeconds(31), ["session:create"]),
+                new DeviceTokenResponse("access-2", Now.AddMinutes(5), ["session:create"])
+            ])
         };
         var session = CreateSession(api, new MemoryDeviceCredentialStore(StoredCredential()), time);
 
@@ -94,6 +97,31 @@ public sealed class DeviceIdentitySessionTests
     }
 
     [Fact]
+    public async Task Concurrent_forced_callers_share_one_token_exchange()
+    {
+        var exchangeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseExchange = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var api = new StubDeviceIdentityApiClient
+        {
+            TokenHandler = async (_, _) =>
+            {
+                exchangeStarted.TrySetResult();
+                await releaseExchange.Task;
+                return Token("access-1");
+            }
+        };
+        var session = CreateSession(api, new MemoryDeviceCredentialStore(StoredCredential()), new FakeTimeProvider(Now));
+
+        var tokensTask = Task.WhenAll(Enumerable.Range(0, 5).Select(_ => session.GetAccessTokenAsync(forceRefresh: true)));
+        await exchangeStarted.Task;
+        releaseExchange.SetResult();
+        var tokens = await tokensTask;
+
+        Assert.Single(tokens.Distinct());
+        Assert.Equal(1, api.TokenCalls);
+    }
+
+    [Fact]
     public async Task Unauthorized_token_exchange_clears_the_stored_credential()
     {
         var store = new MemoryDeviceCredentialStore(StoredCredential());
@@ -107,6 +135,30 @@ public sealed class DeviceIdentitySessionTests
 
         Assert.Null(store.Credential);
         Assert.Equal(1, store.DeleteCalls);
+    }
+
+    [Fact]
+    public async Task Unauthorized_forced_refresh_does_not_leave_a_stale_cached_token_available()
+    {
+        var api = new StubDeviceIdentityApiClient
+        {
+            BootstrapResponse = new BootstrapDeviceResponse(DeviceId, "replacement-secret", 2),
+            TokenOutcomes = new Queue<object>(
+            [
+                Token("cached-access"),
+                new ApiClientException(ApiErrorKind.Unauthorized, "credential rejected", HttpStatusCode.Unauthorized),
+                Token("replacement-access")
+            ])
+        };
+        var session = CreateSession(api, new MemoryDeviceCredentialStore(StoredCredential()), new FakeTimeProvider(Now));
+
+        Assert.Equal("cached-access", await session.GetAccessTokenAsync());
+        await Assert.ThrowsAsync<ApiClientException>(() => session.GetAccessTokenAsync(forceRefresh: true));
+        var refreshed = await session.GetAccessTokenAsync();
+
+        Assert.Equal("replacement-access", refreshed);
+        Assert.Equal(1, api.BootstrapCalls);
+        Assert.Equal(3, api.TokenCalls);
     }
 
     [Fact]
@@ -150,6 +202,7 @@ public sealed class DeviceIdentitySessionTests
         Assert.Equal(("/api/devices/token", $$"""{"deviceId":"{{deviceId}}","credentialSecret":"secret"}"""), requests[1]);
         Assert.Equal("access-1", token.AccessToken);
         Assert.Equal(new DateTimeOffset(2026, 7, 29, 12, 5, 0, TimeSpan.Zero), token.ExpiresAt);
+        Assert.Equal(["session:create"], token.Scopes);
     }
 
     private static DeviceIdentitySession CreateSession(
@@ -161,7 +214,8 @@ public sealed class DeviceIdentitySessionTests
     private static DeviceCredential StoredCredential() =>
         new(DeviceId, "stored-secret", 1, "windows_publisher", "windows");
 
-    private static DeviceTokenResponse Token(string accessToken) => new(accessToken, Now.AddMinutes(5));
+    private static DeviceTokenResponse Token(string accessToken) =>
+        new(accessToken, Now.AddMinutes(5), ["session:create"]);
 
     private sealed class StubDeviceIdentityApiClient : IDeviceIdentityApiClient
     {
@@ -172,7 +226,9 @@ public sealed class DeviceIdentitySessionTests
         public BootstrapDeviceResponse? BootstrapResponse { get; init; }
         public DeviceTokenResponse? TokenResponse { get; init; }
         public Queue<DeviceTokenResponse>? TokenResponses { get; init; }
+        public Queue<object>? TokenOutcomes { get; init; }
         public Exception? TokenException { get; init; }
+        public Func<DeviceTokenRequest, CancellationToken, Task<DeviceTokenResponse>>? TokenHandler { get; init; }
 
         public Task<BootstrapDeviceResponse> BootstrapAsync(BootstrapDeviceRequest request, CancellationToken cancellationToken = default)
         {
@@ -185,6 +241,16 @@ public sealed class DeviceIdentitySessionTests
         {
             TokenCalls++;
             TokenRequest = request;
+            if (TokenHandler is not null) return TokenHandler(request, cancellationToken);
+            if (TokenOutcomes?.Dequeue() is { } outcome)
+            {
+                return outcome switch
+                {
+                    Exception exception => Task.FromException<DeviceTokenResponse>(exception),
+                    DeviceTokenResponse response => Task.FromResult(response),
+                    _ => throw new InvalidOperationException("Unexpected token outcome.")
+                };
+            }
             if (TokenException is not null) return Task.FromException<DeviceTokenResponse>(TokenException);
             return Task.FromResult(TokenResponses?.Dequeue() ?? TokenResponse ?? throw new InvalidOperationException("Unexpected token exchange."));
         }
