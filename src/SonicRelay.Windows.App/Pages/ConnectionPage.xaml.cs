@@ -168,6 +168,7 @@ public sealed partial class ConnectionPage : Page
 
     private void Render(PublisherSnapshot? state)
     {
+        PairingCard.SetSessionCode(state?.SessionCode);
         var authenticated = state?.IsAuthenticated == true;
         SignInPanel.Visibility = authenticated ? Visibility.Collapsed : Visibility.Visible;
         AccountPanel.Visibility = authenticated ? Visibility.Visible : Visibility.Collapsed;

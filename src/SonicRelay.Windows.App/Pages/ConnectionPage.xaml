@@ -1,6 +1,11 @@
-<Page x:Class="SonicRelay.Windows.App.Pages.ConnectionPage" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+<Page x:Class="SonicRelay.Windows.App.Pages.ConnectionPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:controls="using:SonicRelay.Windows.App.Controls">
   <ScrollViewer><StackPanel Padding="24" Spacing="12" MaxWidth="640" HorizontalAlignment="Left">
     <TextBlock FontSize="{StaticResource TitleFontSize}" FontWeight="SemiBold" Text="Connection"/>
+
+    <controls:PairingCard x:Name="PairingCard"/>
 
     <!-- Sign-in form: shown only while signed out. -->
     <StackPanel x:Name="SignInPanel" Spacing="12">
