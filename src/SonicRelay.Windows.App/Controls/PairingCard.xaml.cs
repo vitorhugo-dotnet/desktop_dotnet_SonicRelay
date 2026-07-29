@@ -2,6 +2,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media.Imaging;
 using SonicRelay.Windows.Presentation.Pairing;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage.Streams;
 
 namespace SonicRelay.Windows.App.Controls;
@@ -57,8 +58,8 @@ public sealed partial class PairingCard : UserControl
         if (viewModel is not null)
         {
             viewModel.StateChanged -= OnStateChanged;
-            viewModel.StateChanged += OnStateChanged;
             viewModel.ClearExpiredChallenge(DateTimeOffset.UtcNow);
+            viewModel.StateChanged += OnStateChanged;
         }
         expiryTimer.Start();
         _ = InitializeAsync();
@@ -117,6 +118,25 @@ public sealed partial class PairingCard : UserControl
         await RunUiOperationAsync(() => viewModel.RefreshPairingsAsync());
     }
 
+    private void CopyChallengeId_Click(object sender, RoutedEventArgs e) =>
+        CopyToClipboard(viewModel?.Challenge?.ChallengeId.ToString("D"));
+
+    private void CopyPairingCode_Click(object sender, RoutedEventArgs e) =>
+        CopyToClipboard(viewModel?.Challenge?.Code);
+
+    private static void CopyToClipboard(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+
+        var package = new DataPackage();
+        package.SetText(value);
+        Clipboard.SetContent(package);
+        Clipboard.Flush();
+    }
+
     private async void RevokePairing_Click(object sender, RoutedEventArgs e)
     {
         if (viewModel is null || sender is not Button { Tag: Guid pairingId })
@@ -160,6 +180,7 @@ public sealed partial class PairingCard : UserControl
         var nextImageVersion = ++imageVersion;
 
         PairingCodeText.Text = challenge?.Code ?? "—";
+        PairingChallengeIdText.Text = challenge?.ChallengeId.ToString("D") ?? "—";
         PairingExpiryText.Text = challenge is null
             ? "Create a pairing code to begin."
             : $"Expires {challenge.ExpiresAt.ToLocalTime():t}";
@@ -167,6 +188,8 @@ public sealed partial class PairingCard : UserControl
         BusyRing.IsActive = current?.IsBusy == true;
         RefreshChallengeButton.IsEnabled = current is not null && !current.IsBusy;
         RefreshPairingsButton.IsEnabled = current is not null && !current.IsBusy;
+        CopyChallengeIdButton.IsEnabled = challenge is not null && current?.IsBusy != true;
+        CopyPairingCodeButton.IsEnabled = challenge is not null && current?.IsBusy != true;
         RefreshChallengeButton.Content = challenge is null ? "Create pairing code" : "Refresh pairing code";
         ErrorText.Text = current?.ErrorMessage ?? string.Empty;
         ErrorText.Visibility = string.IsNullOrWhiteSpace(current?.ErrorMessage)

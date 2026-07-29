@@ -69,6 +69,8 @@ $runtimeSource = Get-Content -Raw -LiteralPath (Join-Path $root 'src/SonicRelay.
 $appSource = Get-Content -Raw -LiteralPath (Join-Path $root 'src/SonicRelay.Windows.App/App.xaml.cs')
 $connectionPage = Get-Content -Raw -LiteralPath (Join-Path $root 'src/SonicRelay.Windows.App/Pages/ConnectionPage.xaml')
 $connectionPageCode = Get-Content -Raw -LiteralPath (Join-Path $root 'src/SonicRelay.Windows.App/Pages/ConnectionPage.xaml.cs')
+$pairingCard = Get-Content -Raw -LiteralPath (Join-Path $root 'src/SonicRelay.Windows.App/Controls/PairingCard.xaml')
+$pairingCardCode = Get-Content -Raw -LiteralPath (Join-Path $root 'src/SonicRelay.Windows.App/Controls/PairingCard.xaml.cs')
 $forbiddenProductionIdentity = @(
     'new AuthApiClient('
     'new DeviceApiClient('
@@ -101,6 +103,30 @@ if ($missingDeviceComposition.Count -gt 0) {
     Write-Error "Missing device-identity production composition:`n$($missingDeviceComposition -join "`n")"
 }
 
+$requiredManualPairingSurface = @(
+    'Pairing challenge ID'
+    'Copy challenge ID'
+    'Copy pairing code'
+    'Session join code'
+)
+$missingManualPairingSurface = $requiredManualPairingSurface | Where-Object {
+    $pairingCard.IndexOf($_, [StringComparison]::Ordinal) -lt 0
+}
+if ($missingManualPairingSurface.Count -gt 0) {
+    Write-Error "Missing manual pairing surface:`n$($missingManualPairingSurface -join "`n")"
+}
+
+$requiredPairingLifecyclePatterns = @(
+    '(?s)private void OnLoaded\(.*?ClearExpiredChallenge\(DateTimeOffset\.UtcNow\).*?viewModel\.StateChanged \+= OnStateChanged;'
+    '(?s)private void OnUnloaded\(.*?viewModel\.StateChanged -= OnStateChanged;'
+)
+$missingPairingLifecycle = $requiredPairingLifecyclePatterns | Where-Object {
+    $pairingCardCode -notmatch $_
+}
+if ($missingPairingLifecycle.Count -gt 0) {
+    Write-Error 'PairingCard must clear expired challenges and manage StateChanged across load/unload.'
+}
+
 $releaseSmokeTestPath = Join-Path $root 'docs/release-smoke-test.md'
 if (Test-Path -LiteralPath $releaseSmokeTestPath) {
     $releaseSmokeTest = Get-Content -Raw -LiteralPath $releaseSmokeTestPath
@@ -115,9 +141,14 @@ if (Test-Path -LiteralPath $releaseSmokeTestPath) {
         'firewall rules'
         'open Settings'
         'backend URL'
-        'attempt login'
+        'device-credential.dat'
+        'DPAPI CurrentUser'
+        'DeviceBearer'
+        'QR code'
+        'pairing code'
+        'session join code'
+        'reset device identity'
         '%LOCALAPPDATA%\SonicRelay\WindowsPublisher'
-        'clear local tokens and configuration'
         'missing backend'
         'missing audio device'
         'release is blocked'
@@ -130,6 +161,37 @@ if (Test-Path -LiteralPath $releaseSmokeTestPath) {
     if ($missingReleaseSmokeTestGates.Count -gt 0) {
         Write-Error "Missing release smoke-test gates:`n$($missingReleaseSmokeTestGates -join "`n")"
     }
+
+    $forbiddenReleaseSmokeTestIdentity = @('attempt login', 'tokens.dat', '/auth/login', '/auth/refresh', '/auth/me')
+    $staleReleaseSmokeTestIdentity = $forbiddenReleaseSmokeTestIdentity | Where-Object {
+        $releaseSmokeTest.IndexOf($_, [StringComparison]::OrdinalIgnoreCase) -ge 0
+    }
+    if ($staleReleaseSmokeTestIdentity.Count -gt 0) {
+        Write-Error "Release smoke test still requires Identity:`n$($staleReleaseSmokeTestIdentity -join "`n")"
+    }
+}
+
+$publisherSpecification = Get-Content -Raw -LiteralPath (Join-Path $root 'docs/windows-publisher.md')
+$requiredPublisherDeviceIdentity = @(
+    '/api/devices/bootstrap'
+    '/api/devices/token'
+    'DeviceBearer'
+    'device-credential.dat'
+    'pairing challenge'
+    'session join code'
+)
+$missingPublisherDeviceIdentity = $requiredPublisherDeviceIdentity | Where-Object {
+    $publisherSpecification.IndexOf($_, [StringComparison]::OrdinalIgnoreCase) -lt 0
+}
+if ($missingPublisherDeviceIdentity.Count -gt 0) {
+    Write-Error "Publisher specification is missing device-first contracts:`n$($missingPublisherDeviceIdentity -join "`n")"
+}
+$forbiddenPublisherIdentity = @('/auth/login', '/auth/refresh', '/auth/me', 'tokens.dat', 'UserScopedTokenStore', 'RestoreSessionAsync')
+$stalePublisherIdentity = $forbiddenPublisherIdentity | Where-Object {
+    $publisherSpecification.IndexOf($_, [StringComparison]::OrdinalIgnoreCase) -ge 0
+}
+if ($stalePublisherIdentity.Count -gt 0) {
+    Write-Error "Publisher specification still describes Identity:`n$($stalePublisherIdentity -join "`n")"
 }
 
 $solutionReferencePattern = '(SonicRelay\.Windows\.slnx|\$env:SOLUTION_PATH)'

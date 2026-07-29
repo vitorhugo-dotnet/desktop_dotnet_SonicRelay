@@ -22,6 +22,12 @@
         <StackPanel Grid.Column="1" Spacing="8" VerticalAlignment="Center">
           <TextBlock Text="Pairing code" Opacity="0.7"/>
           <TextBlock x:Name="PairingCodeText" FontSize="28" FontWeight="SemiBold" Text="—"/>
+          <Button x:Name="CopyPairingCodeButton" Content="Copy pairing code"
+                  Click="CopyPairingCode_Click" IsEnabled="False" HorizontalAlignment="Left"/>
+          <TextBlock Text="Pairing challenge ID" Opacity="0.7" Margin="0,8,0,0"/>
+          <TextBlock x:Name="PairingChallengeIdText" Text="—" TextWrapping="Wrap"/>
+          <Button x:Name="CopyChallengeIdButton" Content="Copy challenge ID"
+                  Click="CopyChallengeId_Click" IsEnabled="False" HorizontalAlignment="Left"/>
           <TextBlock x:Name="PairingExpiryText" Opacity="0.7" Text="Create a pairing code to begin." TextWrapping="Wrap"/>
           <TextBlock Text="Session join code" Opacity="0.7" Margin="0,8,0,0"/>
           <TextBlock x:Name="SessionCodeText" FontSize="20" FontWeight="SemiBold" Text="—"/>
