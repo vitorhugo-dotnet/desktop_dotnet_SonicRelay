@@ -1,5 +1,5 @@
 using SonicRelay.Windows.Core.Configuration;
-using SonicRelay.Windows.Core.Storage;
+using SonicRelay.Windows.Core.Authentication;
 using SonicRelay.Windows.Signaling.WebSockets;
 using System.Net;
 using System.Net.WebSockets;
@@ -8,18 +8,16 @@ namespace SonicRelay.Windows.Signaling.Tests;
 
 public sealed class SignalingClientTests
 {
-    private static readonly TokenSet Tokens = new("access-secret", "refresh-secret", DateTimeOffset.UtcNow.AddHours(1));
-
     [Fact]
-    public async Task ConnectUsesConfiguredIdentityAndSendsPublisherReady()
+    public async Task ConnectUsesSessionIdentityAndDeviceBearerAndSendsPublisherReady()
     {
         var socket = new FakeWebSocketConnection();
         var factory = new FakeWebSocketFactory(socket);
         await using var client = CreateClient(factory);
 
-        await client.ConnectAsync("session one", "device/two");
+        await client.ConnectAsync("session one");
 
-        Assert.Equal("wss://signal.example/ws?tenant=blue&sessionId=session%20one&deviceId=device%2Ftwo", socket.ConnectedUri?.AbsoluteUri);
+        Assert.Equal("wss://signal.example/ws?tenant=blue&sessionId=session%20one", socket.ConnectedUri?.AbsoluteUri);
         Assert.Equal("access-secret", socket.AccessToken);
         Assert.Equal(SignalingConnectionState.Connected, client.State);
         Assert.Equal(SignalingMessageTypes.PublisherReady, SignalingMessageEnvelope.Deserialize(Assert.Single(socket.Sent)).Type);
@@ -32,7 +30,7 @@ public sealed class SignalingClientTests
         var handler = new RecordingHandler();
         await using var client = CreateClient(new FakeWebSocketFactory(socket), handler);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        await client.ConnectAsync("session-1", "device-1");
+        await client.ConnectAsync("session-1");
 
         socket.QueueText(new SignalingMessageEnvelope(SignalingMessageTypes.ViewerReady, "session-1", From: "viewer-7"));
         var dispatched = await handler.NextAsync(timeout.Token);
@@ -50,7 +48,7 @@ public sealed class SignalingClientTests
         var handler = new RecordingHandler();
         await using var client = CreateClient(new FakeWebSocketFactory(socket), handler);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        await client.ConnectAsync("session-1", "device-1");
+        await client.ConnectAsync("session-1");
 
         socket.QueueText("{not-json}");
         socket.QueueText(new SignalingMessageEnvelope(SignalingMessageTypes.ViewerReady, "session-1", From: "viewer-9"));
@@ -65,10 +63,10 @@ public sealed class SignalingClientTests
     {
         var factory = new FakeWebSocketFactory(new FakeWebSocketConnection());
         await using var client = CreateClient(factory);
-        await client.ConnectAsync("session-1", "device-1");
+        await client.ConnectAsync("session-1");
 
-        await client.ConnectAsync("session-1", "device-1");
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.ConnectAsync("session-2", "device-1"));
+        await client.ConnectAsync("session-1");
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.ConnectAsync("session-2"));
 
         Assert.Equal(1, factory.CreatedCount);
         Assert.Contains("already active", error.Message, StringComparison.OrdinalIgnoreCase);
@@ -82,7 +80,7 @@ public sealed class SignalingClientTests
         var handler = new RecordingHandler();
         await using var client = CreateClient(factory, handler);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        await client.ConnectAsync("session-1", "device-1");
+        await client.ConnectAsync("session-1");
 
         socket.QueueText(new SignalingMessageEnvelope(SignalingMessageTypes.SessionEnded, "session-1"));
         await handler.NextAsync(timeout.Token);
@@ -99,7 +97,7 @@ public sealed class SignalingClientTests
         await using var client = CreateClient(new FakeWebSocketFactory(new FakeWebSocketConnection()));
         client.StateChanged += states.Add;
 
-        await client.ConnectAsync("session-1", "device-1");
+        await client.ConnectAsync("session-1");
         await client.CloseAsync();
 
         Assert.Equal(
@@ -114,17 +112,21 @@ public sealed class SignalingClientTests
         var replacement = new FakeWebSocketConnection();
         var factory = new FakeWebSocketFactory(first, replacement);
         var delay = new ImmediateReconnectDelay();
+        var tokens = new SequenceAccessTokenProvider("token-1", "token-2");
         var states = new List<SignalingConnectionState>();
-        await using var client = CreateClient(factory, delay: delay);
+        await using var client = CreateClient(factory, delay: delay, tokenProvider: tokens);
         client.StateChanged += states.Add;
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        await client.ConnectAsync("session-1", "device-1");
+        await client.ConnectAsync("session-1");
 
         first.QueueClose(WebSocketCloseStatus.EndpointUnavailable);
         await WaitUntilAsync(() => factory.CreatedCount == 2 && client.State == SignalingConnectionState.Connected, timeout.Token);
 
         Assert.Equal([TimeSpan.FromSeconds(1)], delay.Delays);
         Assert.Contains(SignalingConnectionState.Reconnecting, states);
+        Assert.Equal("token-1", first.AccessToken);
+        Assert.Equal("token-2", replacement.AccessToken);
+        Assert.Equal([false, false], tokens.ForceRefreshCalls);
         Assert.Equal(SignalingMessageTypes.PublisherReady, SignalingMessageEnvelope.Deserialize(Assert.Single(replacement.Sent)).Type);
     }
 
@@ -142,7 +144,7 @@ public sealed class SignalingClientTests
         await using var client = CreateClient(factory, delay: delay,
             policy: new SignalingReconnectPolicy { MaxAttempts = 3 });
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        await client.ConnectAsync("session-1", "device-1");
+        await client.ConnectAsync("session-1");
 
         initial.QueueClose(WebSocketCloseStatus.EndpointUnavailable);
         await WaitUntilAsync(() => client.State == SignalingConnectionState.Faulted, timeout.Token);
@@ -166,7 +168,7 @@ public sealed class SignalingClientTests
         var delay = new ImmediateReconnectDelay();
         await using var client = CreateClient(factory, delay: delay);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        await client.ConnectAsync("session-1", "device-1");
+        await client.ConnectAsync("session-1");
 
         initial.QueueClose(WebSocketCloseStatus.EndpointUnavailable);
         await WaitUntilAsync(
@@ -192,7 +194,7 @@ public sealed class SignalingClientTests
         var delay = new ImmediateReconnectDelay();
         await using var client = CreateClient(factory, delay: delay);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        await client.ConnectAsync("session-1", "device-1");
+        await client.ConnectAsync("session-1");
 
         // The socket drops (transient), and the single reconnect finds the session gone.
         initial.QueueClose(WebSocketCloseStatus.EndpointUnavailable);
@@ -203,7 +205,7 @@ public sealed class SignalingClientTests
 
         // The identity is released, so a brand-new session starts without the
         // "already active for another session" lock.
-        await client.ConnectAsync("session-2", "device-1");
+        await client.ConnectAsync("session-2");
         Assert.Equal(3, factory.CreatedCount);
         Assert.Equal(SignalingConnectionState.Connected, client.State);
     }
@@ -216,7 +218,7 @@ public sealed class SignalingClientTests
         var handler = new RecordingHandler();
         await using var client = CreateClient(factory, handler: handler);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        await client.ConnectAsync("session-1", "device-1");
+        await client.ConnectAsync("session-1");
 
         connection.QueueText(new SignalingMessageEnvelope(SignalingMessageTypes.Ping, "session-1", From: "server"));
         connection.QueueText(new SignalingMessageEnvelope(SignalingMessageTypes.ViewerReady, "session-1", To: "publisher"));
@@ -239,7 +241,7 @@ public sealed class SignalingClientTests
         await using var client = CreateClient(factory, handlers: [throwing, recording]);
         client.HandlerFaulted += faults.Add;
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        await client.ConnectAsync("session-1", "device-1");
+        await client.ConnectAsync("session-1");
 
         connection.QueueText(new SignalingMessageEnvelope(SignalingMessageTypes.ViewerReady, "session-1", To: "publisher"));
 
@@ -254,14 +256,29 @@ public sealed class SignalingClientTests
         ISignalingMessageHandler? handler = null,
         IReadOnlyList<ISignalingMessageHandler>? handlers = null,
         IReconnectDelay? delay = null,
-        SignalingReconnectPolicy? policy = null) =>
+        SignalingReconnectPolicy? policy = null,
+        IDeviceAccessTokenProvider? tokenProvider = null) =>
         new(
             new PublisherConfiguration(new Uri("https://api.example/"), new Uri("https://signal.example/ws?tenant=blue"), 4),
-            new MemoryTokenStore(Tokens),
+            tokenProvider ?? new SequenceAccessTokenProvider("access-secret"),
             handlers ?? (handler is null ? [] : [handler]),
             factory,
             delay ?? new ImmediateReconnectDelay(),
             policy);
+
+    private sealed class SequenceAccessTokenProvider(params string[] tokens) : IDeviceAccessTokenProvider
+    {
+        private readonly Queue<string> tokens = new(tokens);
+        public List<bool> ForceRefreshCalls { get; } = [];
+
+        public Task<string> GetAccessTokenAsync(
+            bool forceRefresh = false,
+            CancellationToken cancellationToken = default)
+        {
+            ForceRefreshCalls.Add(forceRefresh);
+            return Task.FromResult(tokens.Count > 1 ? tokens.Dequeue() : tokens.Peek());
+        }
+    }
 
     private static async Task WaitUntilAsync(Func<bool> condition, CancellationToken cancellationToken)
     {

@@ -14,7 +14,7 @@ public sealed class AuthApiClient(HttpClient httpClient, ITokenStore tokenStore)
             request,
             authenticated: false,
             cancellationToken,
-            allowRefresh: false);
+            replaySafe: false);
         var tokens = response.ToTokenSet();
         await _api.SaveTokensAsync(tokens, cancellationToken);
         return tokens;
@@ -29,13 +29,19 @@ public sealed class AuthApiClient(HttpClient httpClient, ITokenStore tokenStore)
             request,
             authenticated: false,
             cancellationToken,
-            allowRefresh: false);
+            replaySafe: false);
 
     public Task<TokenSet> RefreshAsync(string refreshToken, CancellationToken cancellationToken = default) =>
         _api.RefreshTokensAsync(refreshToken, cancellationToken);
 
     public Task<CurrentUserResponse> GetCurrentUserAsync(CancellationToken cancellationToken = default) =>
-        _api.SendAsync<CurrentUserResponse>(HttpMethod.Get, "/auth/me", null, true, cancellationToken);
+        _api.SendAsync<CurrentUserResponse>(
+            HttpMethod.Get,
+            "/auth/me",
+            null,
+            true,
+            cancellationToken,
+            replaySafe: true);
 
     public Task LogoutAsync(CancellationToken cancellationToken = default) =>
         // Identity issues stateless bearer tokens, so signing out is a local token wipe.

@@ -1,4 +1,5 @@
 using SonicRelay.Windows.ApiClient.Authentication;
+using SonicRelay.Windows.ApiClient.DeviceIdentity;
 using SonicRelay.Windows.ApiClient.Devices;
 using SonicRelay.Windows.ApiClient.Sessions;
 using SonicRelay.Windows.ApiClient.WebRtc;
@@ -7,6 +8,7 @@ using SonicRelay.Windows.Core.Audio;
 using SonicRelay.Windows.Core.Configuration;
 using SonicRelay.Windows.Core.Diagnostics;
 using SonicRelay.Windows.Core.Storage;
+using SonicRelay.Windows.Core.Storage.DeviceIdentity;
 using SonicRelay.Windows.Signaling;
 using SonicRelay.Windows.WebRtc;
 
@@ -27,6 +29,7 @@ public sealed class PublisherRuntime : IAsyncDisposable
     private readonly IPeerConnectionManager peers;
     private readonly IWebRtcPublisher webRtcPublisher;
     private readonly WebRtcAudioBridge audioBridge;
+    private readonly IDisposable deviceIdentitySession;
     private string? lastLoggedState;
     private bool hadActiveSession;
 
@@ -40,12 +43,14 @@ public sealed class PublisherRuntime : IAsyncDisposable
         RelayPreferenceStore relayPreference,
         AudioQualityStore audioQuality,
         IAudioCaptureService audioCapture,
-        AudioOutputPreferenceStore audioOutput)
+        AudioOutputPreferenceStore audioOutput,
+        IDisposable deviceIdentitySession)
     {
         this.httpClient = httpClient;
         this.peers = peers;
         this.webRtcPublisher = webRtcPublisher;
         this.audioBridge = audioBridge;
+        this.deviceIdentitySession = deviceIdentitySession;
         Workflow = workflow;
         BackendBaseUrl = backendBaseUrl;
         RelayPreference = relayPreference;
@@ -92,19 +97,23 @@ public sealed class PublisherRuntime : IAsyncDisposable
         configuration.Validate();
         var tokenStore = new UserScopedTokenStore();
         var http = new HttpClient { BaseAddress = normalized, Timeout = TimeSpan.FromSeconds(30) };
+        var deviceIdentitySession = new DeviceIdentitySession(
+            new DeviceIdentityApiClient(http),
+            new UserScopedDeviceCredentialStore(),
+            Environment.MachineName);
 
         // The WebRTC publisher needs the signaling client to send offers/candidates,
         // but the client takes its handlers up front — register the publisher through
         // a composite handler after both exist.
         var signalingHandlers = new CompositeSignalingMessageHandler();
-        var signaling = new SignalingClient(configuration, tokenStore, [signalingHandlers]);
+        var signaling = new SignalingClient(configuration, deviceIdentitySession, [signalingHandlers]);
         // ICE servers (including short-lived TURN credentials) come from the
         // backend, which serves the SonicRelay coturn deployment. The public
         // Google STUN fallback is a debug-build-only convenience for when the
         // backend request fails; release builds get an empty ICE server list
         // instead of silently depending on Google's STUN server.
         var iceServersProvider = new BackendIceServersProvider(
-            new WebRtcApiClient(http, tokenStore),
+            new WebRtcApiClient(http, deviceIdentitySession),
             allowGoogleStunDevFallback: AllowGoogleStunDevFallback);
         var relayPreference = new RelayPreferenceStore();
         var audioQuality = new AudioQualityStore();
@@ -125,11 +134,22 @@ public sealed class PublisherRuntime : IAsyncDisposable
         var workflow = new PublisherWorkflow(
             new AuthApiClient(http, tokenStore),
             new DeviceApiClient(http, tokenStore),
-            new SessionApiClient(http, tokenStore),
+            new SessionApiClient(http, deviceIdentitySession),
             signaling,
             audio,
             Environment.MachineName);
-        return new PublisherRuntime(http, workflow, normalized, peers, webRtcPublisher, audioBridge, relayPreference, audioQuality, audio, audioOutput);
+        return new PublisherRuntime(
+            http,
+            workflow,
+            normalized,
+            peers,
+            webRtcPublisher,
+            audioBridge,
+            relayPreference,
+            audioQuality,
+            audio,
+            audioOutput,
+            deviceIdentitySession);
     }
 
     private void OnWorkflowStateChanged(PublisherSnapshot state)
@@ -176,6 +196,7 @@ public sealed class PublisherRuntime : IAsyncDisposable
         await audioBridge.DisposeAsync();
         await Workflow.DisposeAsync();
         await webRtcPublisher.DisposeAsync();
+        deviceIdentitySession.Dispose();
         httpClient.Dispose();
         DiagnosticLog.Dispose();
     }

@@ -1,4 +1,4 @@
-using SonicRelay.Windows.Core.Storage;
+using SonicRelay.Windows.Core.Authentication;
 
 namespace SonicRelay.Windows.ApiClient.WebRtc;
 
@@ -14,10 +14,18 @@ public sealed record IceServersResponse(
 
 public sealed record IceServerResponse(IReadOnlyList<string> Urls, string? Username = null, string? Credential = null);
 
-public sealed class WebRtcApiClient(HttpClient httpClient, ITokenStore tokenStore) : IWebRtcApiClient
+public sealed class WebRtcApiClient(
+    HttpClient httpClient,
+    IDeviceAccessTokenProvider accessTokenProvider) : IWebRtcApiClient
 {
-    private readonly ApiHttpClient _api = new(httpClient, tokenStore);
+    private readonly ApiHttpClient _api = new(httpClient, accessTokenProvider);
 
     public Task<IceServersResponse> GetIceServersAsync(CancellationToken cancellationToken = default) =>
-        _api.SendAsync<IceServersResponse>(HttpMethod.Get, "/api/webrtc/ice-servers", null, true, cancellationToken);
+        _api.SendAsync<IceServersResponse>(
+            HttpMethod.Get,
+            "/api/webrtc/ice-servers",
+            null,
+            true,
+            cancellationToken,
+            replaySafe: true);
 }

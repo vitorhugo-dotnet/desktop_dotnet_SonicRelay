@@ -218,7 +218,7 @@ public sealed class WebRtcPublisherTests
         public List<SignalingMessageEnvelope> Messages { get; } = [];
         public SignalingConnectionState State => SignalingConnectionState.Connected;
         public event Action<SignalingConnectionState>? StateChanged { add { } remove { } }
-        public Task ConnectAsync(string sessionId, string deviceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task ConnectAsync(string sessionId, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task CloseAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task SendAsync(SignalingMessageEnvelope message, CancellationToken cancellationToken = default)
         {

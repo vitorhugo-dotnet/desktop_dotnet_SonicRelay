@@ -17,5 +17,11 @@ public sealed class DeviceApiClient(HttpClient httpClient, ITokenStore tokenStor
             cancellationToken);
 
     public async Task<IReadOnlyList<DeviceResponse>> GetDevicesAsync(CancellationToken cancellationToken = default) =>
-        await _api.SendAsync<List<DeviceResponse>>(HttpMethod.Get, "/api/devices/", null, true, cancellationToken);
+        await _api.SendAsync<List<DeviceResponse>>(
+            HttpMethod.Get,
+            "/api/devices/",
+            null,
+            true,
+            cancellationToken,
+            replaySafe: true);
 }

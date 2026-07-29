@@ -158,11 +158,11 @@ public sealed class PublisherWorkflow : IAsyncDisposable
         if (State.SessionId is not null) return SetValidationErrorAsync("A publisher session is already active.");
         return ExecuteAsync(async token =>
         {
-            var session = await sessions.CreateSessionAsync(new CreateSessionRequest(State.DeviceId.Value), token);
+            var session = await sessions.CreateSessionAsync(new CreateSessionRequest(), token);
             SetState(state => state with { SessionId = session.Id, SessionCode = session.Code, ViewerCount = 0 }, "Session created.");
             try
             {
-                await signaling.ConnectAsync(session.Id.ToString("D"), State.DeviceId.Value.ToString("D"), token);
+                await signaling.ConnectAsync(session.Id.ToString("D"), token);
                 await RefreshViewerCountCoreAsync(token);
             }
             catch
@@ -189,9 +189,8 @@ public sealed class PublisherWorkflow : IAsyncDisposable
         return ExecuteAsync(async token =>
         {
             var sessionId = State.SessionId.Value;
-            var deviceId = State.DeviceId.Value;
             await signaling.CloseAsync(token);
-            await signaling.ConnectAsync(sessionId.ToString("D"), deviceId.ToString("D"), token);
+            await signaling.ConnectAsync(sessionId.ToString("D"), token);
             await RefreshViewerCountCoreAsync(token);
         }, cancellationToken);
     }

@@ -1,6 +1,6 @@
 using System.Net.WebSockets;
+using SonicRelay.Windows.Core.Authentication;
 using SonicRelay.Windows.Core.Configuration;
-using SonicRelay.Windows.Core.Storage;
 using SonicRelay.Windows.Signaling.WebSockets;
 
 namespace SonicRelay.Windows.Signaling;
@@ -33,7 +33,7 @@ public sealed record SignalingReconnectPolicy
 public sealed class SignalingClient : ISignalingClient
 {
     private readonly PublisherConfiguration configuration;
-    private readonly ITokenStore tokenStore;
+    private readonly IDeviceAccessTokenProvider accessTokenProvider;
     private readonly IReadOnlyList<ISignalingMessageHandler> handlers;
     private readonly IWebSocketConnectionFactory connectionFactory;
     private readonly IReconnectDelay reconnectDelay;
@@ -44,26 +44,25 @@ public sealed class SignalingClient : ISignalingClient
     private IWebSocketConnection? connection;
     private Task? receiveTask;
     private string? activeSessionId;
-    private string? activeDeviceId;
 
     public SignalingClient(
         PublisherConfiguration configuration,
-        ITokenStore tokenStore,
+        IDeviceAccessTokenProvider accessTokenProvider,
         IEnumerable<ISignalingMessageHandler> handlers)
-        : this(configuration, tokenStore, handlers, new ClientWebSocketConnectionFactory(), new ReconnectDelay())
+        : this(configuration, accessTokenProvider, handlers, new ClientWebSocketConnectionFactory(), new ReconnectDelay())
     {
     }
 
     internal SignalingClient(
         PublisherConfiguration configuration,
-        ITokenStore tokenStore,
+        IDeviceAccessTokenProvider accessTokenProvider,
         IEnumerable<ISignalingMessageHandler> handlers,
         IWebSocketConnectionFactory connectionFactory,
         IReconnectDelay reconnectDelay,
         SignalingReconnectPolicy? reconnectPolicy = null)
     {
         this.configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
-        this.tokenStore = tokenStore ?? throw new ArgumentNullException(nameof(tokenStore));
+        this.accessTokenProvider = accessTokenProvider ?? throw new ArgumentNullException(nameof(accessTokenProvider));
         this.handlers = handlers?.ToArray() ?? throw new ArgumentNullException(nameof(handlers));
         this.connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
         this.reconnectDelay = reconnectDelay ?? throw new ArgumentNullException(nameof(reconnectDelay));
@@ -79,26 +78,23 @@ public sealed class SignalingClient : ISignalingClient
     /// </summary>
     public event Action<Exception>? HandlerFaulted;
 
-    public async Task ConnectAsync(string sessionId, string deviceId, CancellationToken cancellationToken = default)
+    public async Task ConnectAsync(string sessionId, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(deviceId);
 
         await lifecycleLock.WaitAsync(cancellationToken);
         try
         {
             if (IsActive())
             {
-                if (string.Equals(activeSessionId, sessionId, StringComparison.Ordinal)
-                    && string.Equals(activeDeviceId, deviceId, StringComparison.Ordinal))
+                if (string.Equals(activeSessionId, sessionId, StringComparison.Ordinal))
                 {
                     return;
                 }
-                throw new InvalidOperationException("A signaling connection is already active for another session or device.");
+                throw new InvalidOperationException("A signaling connection is already active for another session.");
             }
 
             activeSessionId = sessionId;
-            activeDeviceId = deviceId;
             lifecycleCancellation?.Dispose();
             lifecycleCancellation = new CancellationTokenSource();
             SetState(SignalingConnectionState.Connecting);
@@ -170,16 +166,16 @@ public sealed class SignalingClient : ISignalingClient
 
     private async Task OpenConnectionAsync(CancellationToken cancellationToken)
     {
-        var tokenResult = await tokenStore.LoadAsync(cancellationToken);
-        if (!tokenResult.Succeeded || string.IsNullOrWhiteSpace(tokenResult.Tokens?.AccessToken))
+        var accessToken = await accessTokenProvider.GetAccessTokenAsync(cancellationToken: cancellationToken);
+        if (string.IsNullOrWhiteSpace(accessToken))
         {
-            throw new InvalidOperationException(tokenResult.Message ?? "A current access token is required for signaling.");
+            throw new InvalidOperationException("A current access token is required for signaling.");
         }
 
         var next = connectionFactory.Create();
         try
         {
-            await next.ConnectAsync(BuildConnectionUri(), tokenResult.Tokens.AccessToken, cancellationToken);
+            await next.ConnectAsync(BuildConnectionUri(), accessToken, cancellationToken);
             await SendCoreAsync(next, new SignalingMessageEnvelope(SignalingMessageTypes.PublisherReady, activeSessionId), cancellationToken);
         }
         catch
@@ -392,7 +388,7 @@ public sealed class SignalingClient : ISignalingClient
             }
         };
         var existingQuery = builder.Query.TrimStart('?');
-        var identityQuery = $"sessionId={Uri.EscapeDataString(activeSessionId!)}&deviceId={Uri.EscapeDataString(activeDeviceId!)}";
+        var identityQuery = $"sessionId={Uri.EscapeDataString(activeSessionId!)}";
         builder.Query = string.IsNullOrEmpty(existingQuery) ? identityQuery : $"{existingQuery}&{identityQuery}";
         return builder.Uri;
     }
@@ -427,7 +423,6 @@ public sealed class SignalingClient : ISignalingClient
     private void ClearActiveIdentity()
     {
         activeSessionId = null;
-        activeDeviceId = null;
     }
 
     private static async Task IgnoreCancellationAsync(Task task)

@@ -385,12 +385,12 @@ public sealed class PublisherWorkflowTests
 
     private sealed class FakeSessions : ISessionApiClient
     {
-        public StreamSessionResponse Created { get; } = new(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "active", 4, DateTimeOffset.UtcNow.AddMinutes(5), DateTimeOffset.UtcNow, null, DateTimeOffset.UtcNow, "ABC123");
+        public StreamSessionResponse Created { get; } = new(Guid.NewGuid(), Guid.NewGuid(), "active", 4, DateTimeOffset.UtcNow.AddMinutes(5), DateTimeOffset.UtcNow, null, DateTimeOffset.UtcNow, "ABC123");
         public Guid? EndedId { get; private set; }
         public Exception? CreateException { get; set; }
         public Task<StreamSessionResponse> CreateSessionAsync(CreateSessionRequest request, CancellationToken cancellationToken = default) =>
             CreateException is null
-                ? Task.FromResult(Created with { SourceDeviceId = request.SourceDeviceId })
+                ? Task.FromResult(Created)
                 : Task.FromException<StreamSessionResponse>(CreateException);
         public Task<IReadOnlyList<ActiveSessionResponse>> GetActiveSessionsAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<ActiveSessionResponse>>([]);
         public Task<StreamSessionResponse> EndSessionAsync(Guid sessionId, CancellationToken cancellationToken = default)
@@ -406,7 +406,7 @@ public sealed class PublisherWorkflowTests
         public string? SessionId { get; private set; }
         public bool CloseCalled { get; private set; }
         public event Action<SignalingConnectionState>? StateChanged;
-        public Task ConnectAsync(string sessionId, string deviceId, CancellationToken cancellationToken = default)
+        public Task ConnectAsync(string sessionId, CancellationToken cancellationToken = default)
         {
             SessionId = sessionId;
             State = SignalingConnectionState.Connected;

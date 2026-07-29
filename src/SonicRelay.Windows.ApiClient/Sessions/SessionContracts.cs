@@ -11,11 +11,10 @@ public interface ISessionApiClient
     Task<StreamSessionResponse> EndSessionAsync(Guid sessionId, CancellationToken cancellationToken = default);
 }
 
-public sealed record CreateSessionRequest(Guid SourceDeviceId, int? MaxViewers = null);
+public sealed record CreateSessionRequest(int? MaxViewers = null);
 
 public sealed record StreamSessionResponse(
     Guid Id,
-    Guid OwnerUserId,
     Guid SourceDeviceId,
     string Status,
     int MaxViewers,
@@ -27,7 +26,6 @@ public sealed record StreamSessionResponse(
 
 public sealed record ActiveSessionResponse(
     Guid Id,
-    Guid OwnerUserId,
     Guid SourceDeviceId,
     string Status,
     int MaxViewers,
