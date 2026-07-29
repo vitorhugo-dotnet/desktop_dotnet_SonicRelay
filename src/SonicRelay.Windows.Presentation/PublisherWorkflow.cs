@@ -3,6 +3,8 @@ using SonicRelay.Windows.ApiClient.Devices;
 using SonicRelay.Windows.ApiClient.Errors;
 using SonicRelay.Windows.ApiClient.Sessions;
 using SonicRelay.Windows.Audio;
+using SonicRelay.Windows.Core.Authentication;
+using SonicRelay.Windows.Core.Storage.DeviceIdentity;
 using SonicRelay.Windows.Signaling;
 
 namespace SonicRelay.Windows.Presentation;
@@ -15,6 +17,8 @@ public sealed class PublisherWorkflow : IAsyncDisposable
     private readonly ISignalingClient signaling;
     private readonly IAudioCaptureService audio;
     private readonly string deviceName;
+    private readonly IDeviceAccessTokenProvider deviceIdentity;
+    private readonly IDeviceCredentialStore deviceCredentials;
     private readonly SemaphoreSlim operationLock = new(1, 1);
     private readonly object stateLock = new();
     private bool disposed;
@@ -33,6 +37,29 @@ public sealed class PublisherWorkflow : IAsyncDisposable
         this.signaling = signaling ?? throw new ArgumentNullException(nameof(signaling));
         this.audio = audio ?? throw new ArgumentNullException(nameof(audio));
         this.deviceName = string.IsNullOrWhiteSpace(deviceName) ? "Windows Publisher" : deviceName.Trim();
+        deviceIdentity = null!;
+        deviceCredentials = null!;
+        signaling.StateChanged += OnSignalingStateChanged;
+        audio.StateChanged += OnAudioStateChanged;
+        audio.LevelChanged += OnAudioLevelChanged;
+        State = new PublisherSnapshot { AudioDiagnostics = audio.Diagnostics };
+    }
+
+    public PublisherWorkflow(
+        IDeviceAccessTokenProvider deviceIdentity,
+        IDeviceCredentialStore deviceCredentials,
+        ISessionApiClient sessions,
+        ISignalingClient signaling,
+        IAudioCaptureService audio)
+    {
+        this.deviceIdentity = deviceIdentity ?? throw new ArgumentNullException(nameof(deviceIdentity));
+        this.deviceCredentials = deviceCredentials ?? throw new ArgumentNullException(nameof(deviceCredentials));
+        this.sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
+        this.signaling = signaling ?? throw new ArgumentNullException(nameof(signaling));
+        this.audio = audio ?? throw new ArgumentNullException(nameof(audio));
+        auth = null!;
+        devices = null!;
+        deviceName = "Windows Publisher";
         signaling.StateChanged += OnSignalingStateChanged;
         audio.StateChanged += OnAudioStateChanged;
         audio.LevelChanged += OnAudioLevelChanged;
@@ -41,6 +68,24 @@ public sealed class PublisherWorkflow : IAsyncDisposable
 
     public PublisherSnapshot State { get; private set; }
     public event Action<PublisherSnapshot>? StateChanged;
+
+    public Task InitializeDeviceIdentityAsync(CancellationToken cancellationToken = default) =>
+        ExecuteAsync(async token =>
+        {
+            await deviceIdentity.GetAccessTokenAsync(cancellationToken: token);
+            var stored = await deviceCredentials.LoadAsync(token);
+            if (!stored.Succeeded || stored.Credential is null)
+            {
+                throw new InvalidOperationException("The device credential is unavailable after bootstrap.");
+            }
+
+            SetState(state => state with
+            {
+                IsAuthenticated = true,
+                DeviceId = stored.Credential.DeviceId,
+                DeviceName = Environment.MachineName
+            }, "Publisher device identity is ready.");
+        }, cancellationToken);
 
     public Task LoginAsync(string email, string password, CancellationToken cancellationToken = default)
     {
@@ -154,7 +199,7 @@ public sealed class PublisherWorkflow : IAsyncDisposable
     public Task CreateSessionAsync(CancellationToken cancellationToken = default)
     {
         if (!State.IsAuthenticated || State.DeviceId is null)
-            return SetValidationErrorAsync("Sign in and register this device before creating a session.");
+            return SetValidationErrorAsync("Initialize this publisher device before creating a session.");
         if (State.SessionId is not null) return SetValidationErrorAsync("A publisher session is already active.");
         return ExecuteAsync(async token =>
         {
@@ -184,7 +229,7 @@ public sealed class PublisherWorkflow : IAsyncDisposable
     /// </summary>
     public Task ReconnectSignalingAsync(CancellationToken cancellationToken = default)
     {
-        if (State.SessionId is null || State.DeviceId is null)
+        if (State.SessionId is null)
             return SetValidationErrorAsync("There is no active session to reconnect.");
         return ExecuteAsync(async token =>
         {
@@ -262,12 +307,9 @@ public sealed class PublisherWorkflow : IAsyncDisposable
     /// <summary>
     /// Serializes an operation, publishing busy/error state around it.
     /// <paramref name="unauthorizedMessage"/> is the message shown when the
-    /// operation fails with <see cref="ApiErrorKind.Unauthorized"/>; only the
-    /// explicit sign-in passes one. For every other operation a surviving 401
-    /// (the HTTP layer already retried with the refresh token) means the
-    /// stored session is gone, so local auth state is dropped too — the UI
-    /// must never claim "login failed" while still showing the account as
-    /// signed in.
+    /// operation fails with <see cref="ApiErrorKind.Unauthorized"/>. In the active
+    /// device-identity flow, a surviving 401 means the credential was rejected and
+    /// the publisher must bootstrap again rather than fall back to account login.
     /// </summary>
     private async Task ExecuteAsync(
         Func<CancellationToken, Task> operation,
@@ -318,11 +360,13 @@ public sealed class PublisherWorkflow : IAsyncDisposable
         return Task.CompletedTask;
     }
 
-    private static string ToFriendlyMessage(Exception exception, string? unauthorizedMessage) => exception switch
+    private string ToFriendlyMessage(Exception exception, string? unauthorizedMessage) => exception switch
     {
         ApiClientException api => api.Kind switch
         {
-            ApiErrorKind.Unauthorized => unauthorizedMessage ?? "Your session expired. Sign in again.",
+            ApiErrorKind.Unauthorized => unauthorizedMessage ?? (deviceIdentity is null
+                ? "Your session expired. Sign in again."
+                : "The publisher device is no longer authorized. Restart to bootstrap it again."),
             ApiErrorKind.NetworkUnavailable => "The backend network is unavailable. Check the URL and connection.",
             ApiErrorKind.BackendUnavailable => "The backend is unavailable. Try again shortly.",
             _ => api.Message

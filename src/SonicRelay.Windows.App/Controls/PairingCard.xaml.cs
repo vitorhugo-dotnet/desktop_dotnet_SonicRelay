@@ -11,6 +11,7 @@ public sealed partial class PairingCard : UserControl
     private readonly DispatcherTimer expiryTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private PairingViewModel? viewModel;
     private int imageVersion;
+    private bool isLoaded;
 
     public PairingCard()
     {
@@ -28,9 +29,12 @@ public sealed partial class PairingCard : UserControl
         }
 
         viewModel = value;
-        if (viewModel is not null)
+        if (isLoaded && viewModel is not null)
         {
             viewModel.StateChanged += OnStateChanged;
+            viewModel.ClearExpiredChallenge(DateTimeOffset.UtcNow);
+            _ = InitializeAsync();
+            return;
         }
 
         _ = RenderAsync();
@@ -49,11 +53,26 @@ public sealed partial class PairingCard : UserControl
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
+        isLoaded = true;
+        if (viewModel is not null)
+        {
+            viewModel.StateChanged -= OnStateChanged;
+            viewModel.StateChanged += OnStateChanged;
+            viewModel.ClearExpiredChallenge(DateTimeOffset.UtcNow);
+        }
         expiryTimer.Start();
         _ = InitializeAsync();
     }
 
-    private void OnUnloaded(object sender, RoutedEventArgs e) => expiryTimer.Stop();
+    private void OnUnloaded(object sender, RoutedEventArgs e)
+    {
+        expiryTimer.Stop();
+        isLoaded = false;
+        if (viewModel is not null)
+        {
+            viewModel.StateChanged -= OnStateChanged;
+        }
+    }
 
     private void OnExpiryTick(object? sender, object e) =>
         viewModel?.ClearExpiredChallenge(DateTimeOffset.UtcNow);

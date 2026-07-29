@@ -3,13 +3,42 @@ using SonicRelay.Windows.ApiClient.Devices;
 using SonicRelay.Windows.ApiClient.Errors;
 using SonicRelay.Windows.ApiClient.Sessions;
 using SonicRelay.Windows.Audio;
+using SonicRelay.Windows.Core.Authentication;
 using SonicRelay.Windows.Core.Storage;
+using SonicRelay.Windows.Core.Storage.DeviceIdentity;
 using SonicRelay.Windows.Signaling;
 
 namespace SonicRelay.Windows.Presentation.Tests;
 
 public sealed class PublisherWorkflowTests
 {
+    [Fact]
+    public async Task Device_identity_startup_requests_token_and_exposes_persisted_device()
+    {
+        await using var fixture = new DeviceIdentityFixture();
+
+        await fixture.Workflow.InitializeDeviceIdentityAsync();
+
+        Assert.Equal(1, fixture.Identity.TokenRequests);
+        Assert.True(fixture.Workflow.State.IsAuthenticated);
+        Assert.Equal(fixture.Credential.DeviceId, fixture.Workflow.State.DeviceId);
+        Assert.True(fixture.Workflow.State.CanCreateSession);
+    }
+
+    [Fact]
+    public async Task Device_identity_workflow_creates_and_reconnects_session_with_session_id_only()
+    {
+        await using var fixture = new DeviceIdentityFixture();
+        await fixture.Workflow.InitializeDeviceIdentityAsync();
+
+        await fixture.Workflow.CreateSessionAsync();
+        await fixture.Workflow.ReconnectSignalingAsync();
+
+        Assert.Null(fixture.Sessions.LastCreateRequest.MaxViewers);
+        Assert.Equal(fixture.Sessions.Created.Id.ToString("D"), fixture.Signaling.SessionId);
+        Assert.True(fixture.Signaling.CloseCalled);
+    }
+
     [Theory]
     [InlineData("", "password", "Email is required.")]
     [InlineData("user@example.com", "", "Password is required.")]
@@ -170,7 +199,7 @@ public sealed class PublisherWorkflowTests
     {
         await using var fixture = new Fixture();
         await fixture.Workflow.CreateSessionAsync();
-        Assert.Equal("Sign in and register this device before creating a session.", fixture.Workflow.State.ErrorMessage);
+        Assert.Equal("Initialize this publisher device before creating a session.", fixture.Workflow.State.ErrorMessage);
 
         await fixture.Workflow.StartAudioAsync();
         Assert.Equal("Create a session and connect signaling before starting audio.", fixture.Workflow.State.ErrorMessage);
@@ -307,6 +336,60 @@ public sealed class PublisherWorkflowTests
     private static DeviceResponse Device(string name, bool revoked) =>
         new(Guid.NewGuid(), name, "windows_publisher", "windows", null, true, revoked, null, DateTimeOffset.UtcNow);
 
+    private sealed class DeviceIdentityFixture : IAsyncDisposable
+    {
+        public DeviceCredential Credential { get; } = new(
+            Guid.Parse("00000000-0000-0000-0000-000000000501"),
+            "device-secret",
+            1,
+            "windows_publisher",
+            "windows");
+        public FakeDeviceIdentity Identity { get; } = new();
+        public FakeSessions Sessions { get; } = new();
+        public FakeSignaling Signaling { get; } = new();
+        public FakeAudio Audio { get; } = new();
+        public PublisherWorkflow Workflow { get; }
+
+        public DeviceIdentityFixture()
+        {
+            Workflow = new PublisherWorkflow(
+                Identity,
+                new FakeDeviceCredentialStore(Credential),
+                Sessions,
+                Signaling,
+                Audio);
+        }
+
+        public ValueTask DisposeAsync() => Workflow.DisposeAsync();
+    }
+
+    private sealed class FakeDeviceIdentity : IDeviceAccessTokenProvider
+    {
+        public int TokenRequests { get; private set; }
+
+        public Task<string> GetAccessTokenAsync(
+            bool forceRefresh = false,
+            CancellationToken cancellationToken = default)
+        {
+            TokenRequests++;
+            return Task.FromResult("device-token");
+        }
+    }
+
+    private sealed class FakeDeviceCredentialStore(DeviceCredential credential) : IDeviceCredentialStore
+    {
+        public Task<DeviceCredentialStorageResult> SaveAsync(
+            DeviceCredential value,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(DeviceCredentialStorageResult.Success(value));
+
+        public Task<DeviceCredentialStorageResult> LoadAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(DeviceCredentialStorageResult.Success(credential));
+
+        public Task<DeviceCredentialStorageResult> DeleteAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(DeviceCredentialStorageResult.Success());
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         public FakeAuth Auth { get; } = new();
@@ -388,10 +471,14 @@ public sealed class PublisherWorkflowTests
         public StreamSessionResponse Created { get; } = new(Guid.NewGuid(), Guid.NewGuid(), "active", 4, DateTimeOffset.UtcNow.AddMinutes(5), DateTimeOffset.UtcNow, null, DateTimeOffset.UtcNow, "ABC123");
         public Guid? EndedId { get; private set; }
         public Exception? CreateException { get; set; }
-        public Task<StreamSessionResponse> CreateSessionAsync(CreateSessionRequest request, CancellationToken cancellationToken = default) =>
-            CreateException is null
+        public CreateSessionRequest LastCreateRequest { get; private set; } = new();
+        public Task<StreamSessionResponse> CreateSessionAsync(CreateSessionRequest request, CancellationToken cancellationToken = default)
+        {
+            LastCreateRequest = request;
+            return CreateException is null
                 ? Task.FromResult(Created)
                 : Task.FromException<StreamSessionResponse>(CreateException);
+        }
         public Task<IReadOnlyList<ActiveSessionResponse>> GetActiveSessionsAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<ActiveSessionResponse>>([]);
         public Task<StreamSessionResponse> EndSessionAsync(Guid sessionId, CancellationToken cancellationToken = default)
         {

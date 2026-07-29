@@ -59,7 +59,7 @@ public sealed partial class DiagnosticsPage : Page
         RuntimeVersionText.Text = snapshot.RuntimeVersion;
         OsVersionText.Text = snapshot.OsVersion;
         BackendText.Text = snapshot.Backend.Host;
-        AuthText.Text = snapshot.Auth.IsAuthenticated ? "Authenticated" : "Not authenticated";
+        AuthText.Text = snapshot.Auth.IsAuthenticated ? "DeviceBearer ready" : "Unavailable";
         DeviceText.Text = snapshot.Device.MaskedId;
         SessionText.Text = snapshot.Session.MaskedId;
         SignalingText.Text = snapshot.Signaling.ConnectionState;

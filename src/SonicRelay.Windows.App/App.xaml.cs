@@ -50,18 +50,15 @@ public partial class App : Application
     public void ApplyAppearance() => (_window as MainWindow)?.ApplyAppearance();
 
     /// <summary>
-    /// Swaps the active runtime for one pointed at <paramref name="backendBaseUrl"/>
-    /// and persists that URL so the next launch restores the session against the
-    /// same backend (instead of the localhost template written on first run).
-    /// Set <paramref name="restoreSession"/> to false when the caller signs in
-    /// immediately afterwards — running the startup restore concurrently with an
-    /// explicit login is redundant and the two used to race for the workflow lock.
+    /// Bootstraps the publisher device against <paramref name="backendBaseUrl"/>,
+    /// swaps in the initialized runtime, and persists the URL for the next launch.
     /// </summary>
-    public async Task ConfigureBackendAsync(Uri backendBaseUrl, bool restoreSession = true)
+    public async Task ConfigureBackendAsync(Uri backendBaseUrl)
     {
         // The WASAPI-backed capture service is the Windows platform adapter; the
         // shared runtime composition only sees IAudioCaptureService (issue #32).
         var replacement = PublisherRuntime.Create(backendBaseUrl, new AudioCaptureService());
+        await replacement.InitializeDeviceIdentityAsync();
         var previous = runtime;
         runtime = replacement;
         RuntimeChanged?.Invoke(runtime);
@@ -74,9 +71,6 @@ public partial class App : Application
         {
             // Persisting the backend is best-effort; the session still works.
         }
-        // Restore a persisted session (refresh + /auth/me) so the user stays signed
-        // in across restarts. Non-blocking; the UI reacts to workflow StateChanged.
-        if (restoreSession) _ = replacement.Workflow.RestoreSessionAsync();
     }
 
     public async Task DisposeRuntimeAsync()

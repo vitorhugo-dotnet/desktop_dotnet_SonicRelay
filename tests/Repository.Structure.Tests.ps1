@@ -65,6 +65,42 @@ if ($readme -notmatch '\(docs/release-smoke-test\.md\)') {
     Write-Error 'README.md must link to docs/release-smoke-test.md.'
 }
 
+$runtimeSource = Get-Content -Raw -LiteralPath (Join-Path $root 'src/SonicRelay.Windows.Presentation/PublisherRuntime.cs')
+$appSource = Get-Content -Raw -LiteralPath (Join-Path $root 'src/SonicRelay.Windows.App/App.xaml.cs')
+$connectionPage = Get-Content -Raw -LiteralPath (Join-Path $root 'src/SonicRelay.Windows.App/Pages/ConnectionPage.xaml')
+$connectionPageCode = Get-Content -Raw -LiteralPath (Join-Path $root 'src/SonicRelay.Windows.App/Pages/ConnectionPage.xaml.cs')
+$forbiddenProductionIdentity = @(
+    'new AuthApiClient('
+    'new DeviceApiClient('
+    'new UserScopedTokenStore('
+    'RestoreSessionAsync('
+    '/auth/login'
+    '/auth/register'
+    '/auth/me'
+    '/auth/refresh'
+)
+$activeComposition = $runtimeSource + "`n" + $appSource + "`n" + $connectionPage + "`n" + $connectionPageCode
+$reachableIdentity = $forbiddenProductionIdentity | Where-Object {
+    $activeComposition.IndexOf($_, [StringComparison]::Ordinal) -ge 0
+}
+if ($reachableIdentity.Count -gt 0) {
+    Write-Error "Production composition still reaches human Identity:`n$($reachableIdentity -join "`n")"
+}
+
+$requiredDeviceComposition = @(
+    'UserScopedDeviceCredentialStore'
+    'DeviceIdentityApiClient'
+    'DeviceIdentitySession'
+    'PairingApiClient'
+    'InitializeDeviceIdentityAsync'
+)
+$missingDeviceComposition = $requiredDeviceComposition | Where-Object {
+    $activeComposition.IndexOf($_, [StringComparison]::Ordinal) -lt 0
+}
+if ($missingDeviceComposition.Count -gt 0) {
+    Write-Error "Missing device-identity production composition:`n$($missingDeviceComposition -join "`n")"
+}
+
 $releaseSmokeTestPath = Join-Path $root 'docs/release-smoke-test.md'
 if (Test-Path -LiteralPath $releaseSmokeTestPath) {
     $releaseSmokeTest = Get-Content -Raw -LiteralPath $releaseSmokeTestPath

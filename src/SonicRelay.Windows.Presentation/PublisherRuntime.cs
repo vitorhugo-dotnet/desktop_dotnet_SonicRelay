@@ -1,14 +1,13 @@
-using SonicRelay.Windows.ApiClient.Authentication;
 using SonicRelay.Windows.ApiClient.DeviceIdentity;
-using SonicRelay.Windows.ApiClient.Devices;
+using SonicRelay.Windows.ApiClient.Pairing;
 using SonicRelay.Windows.ApiClient.Sessions;
 using SonicRelay.Windows.ApiClient.WebRtc;
 using SonicRelay.Windows.Audio;
 using SonicRelay.Windows.Core.Audio;
 using SonicRelay.Windows.Core.Configuration;
 using SonicRelay.Windows.Core.Diagnostics;
-using SonicRelay.Windows.Core.Storage;
 using SonicRelay.Windows.Core.Storage.DeviceIdentity;
+using SonicRelay.Windows.Presentation.Pairing;
 using SonicRelay.Windows.Signaling;
 using SonicRelay.Windows.WebRtc;
 
@@ -29,7 +28,7 @@ public sealed class PublisherRuntime : IAsyncDisposable
     private readonly IPeerConnectionManager peers;
     private readonly IWebRtcPublisher webRtcPublisher;
     private readonly WebRtcAudioBridge audioBridge;
-    private readonly IDisposable deviceIdentitySession;
+    private readonly DeviceIdentitySession deviceIdentitySession;
     private string? lastLoggedState;
     private bool hadActiveSession;
 
@@ -44,7 +43,7 @@ public sealed class PublisherRuntime : IAsyncDisposable
         AudioQualityStore audioQuality,
         IAudioCaptureService audioCapture,
         AudioOutputPreferenceStore audioOutput,
-        IDisposable deviceIdentitySession)
+        DeviceIdentitySession deviceIdentitySession)
     {
         this.httpClient = httpClient;
         this.peers = peers;
@@ -75,6 +74,7 @@ public sealed class PublisherRuntime : IAsyncDisposable
     public DiagnosticLog DiagnosticLog { get; }
     public DiagnosticReportExporter ReportExporter { get; }
     public IWebRtcPublisher WebRtcPublisher => webRtcPublisher;
+    public PairingViewModel? Pairing { get; private set; }
 
     /// <summary>
     /// Composes the shared publisher runtime for one backend. The platform shell
@@ -95,11 +95,11 @@ public sealed class PublisherRuntime : IAsyncDisposable
         var signalingUrl = new Uri(normalized, "ws/signaling");
         var configuration = new PublisherConfiguration(normalized, signalingUrl, 4);
         configuration.Validate();
-        var tokenStore = new UserScopedTokenStore();
         var http = new HttpClient { BaseAddress = normalized, Timeout = TimeSpan.FromSeconds(30) };
+        var credentialStore = new UserScopedDeviceCredentialStore();
         var deviceIdentitySession = new DeviceIdentitySession(
             new DeviceIdentityApiClient(http),
-            new UserScopedDeviceCredentialStore(),
+            credentialStore,
             Environment.MachineName);
 
         // The WebRTC publisher needs the signaling client to send offers/candidates,
@@ -132,12 +132,11 @@ public sealed class PublisherRuntime : IAsyncDisposable
         audio.SelectOutputDevice(audioOutput.SelectedDeviceId);
         var audioBridge = new WebRtcAudioBridge(audio, webRtcPublisher);
         var workflow = new PublisherWorkflow(
-            new AuthApiClient(http, tokenStore),
-            new DeviceApiClient(http, tokenStore),
+            deviceIdentitySession,
+            credentialStore,
             new SessionApiClient(http, deviceIdentitySession),
             signaling,
-            audio,
-            Environment.MachineName);
+            audio);
         return new PublisherRuntime(
             http,
             workflow,
@@ -150,6 +149,20 @@ public sealed class PublisherRuntime : IAsyncDisposable
             audio,
             audioOutput,
             deviceIdentitySession);
+    }
+
+    public async Task InitializeDeviceIdentityAsync(CancellationToken cancellationToken = default)
+    {
+        await Workflow.InitializeDeviceIdentityAsync(cancellationToken);
+        if (Workflow.State.DeviceId is not { } deviceId)
+        {
+            return;
+        }
+
+        Pairing = new PairingViewModel(
+            new PairingApiClient(httpClient, deviceIdentitySession),
+            new PairingQrCodeService(),
+            deviceId);
     }
 
     private void OnWorkflowStateChanged(PublisherSnapshot state)

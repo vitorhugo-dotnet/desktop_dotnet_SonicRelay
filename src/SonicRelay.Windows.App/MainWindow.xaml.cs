@@ -100,7 +100,9 @@ public sealed partial class MainWindow : Window
     private void Render(PublisherSnapshot? state)
     {
         GlobalStatusText.Text = state is null ? "Backend not configured"
-            : state.IsAuthenticated ? $"Signed in · Signaling {state.SignalingState}" : "Backend configured · Sign in required";
+            : state.HasDeviceIdentity
+                ? $"Device ready · Signaling {state.SignalingState}"
+                : "Backend configured · Device identity unavailable";
         LatestLogText.Text = state is { ActivityLog.Count: > 0 }
             ? state.ActivityLog[^1]
             : "Activity log · No events yet";

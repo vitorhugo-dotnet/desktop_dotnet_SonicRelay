@@ -20,7 +20,7 @@
         <TextBlock Grid.Row="1" Text="Runtime"/><TextBlock x:Name="RuntimeVersionText" Grid.Row="1" Grid.Column="1"/>
         <TextBlock Grid.Row="2" Text="OS"/><TextBlock x:Name="OsVersionText" Grid.Row="2" Grid.Column="1"/>
         <TextBlock Grid.Row="3" Text="Backend"/><TextBlock x:Name="BackendText" Grid.Row="3" Grid.Column="1"/>
-        <TextBlock Grid.Row="4" Text="Authentication"/><TextBlock x:Name="AuthText" Grid.Row="4" Grid.Column="1"/>
+        <TextBlock Grid.Row="4" Text="Device identity"/><TextBlock x:Name="AuthText" Grid.Row="4" Grid.Column="1"/>
         <TextBlock Grid.Row="5" Text="Device ID"/><TextBlock x:Name="DeviceText" Grid.Row="5" Grid.Column="1"/>
         <TextBlock Grid.Row="6" Text="Session ID"/><TextBlock x:Name="SessionText" Grid.Row="6" Grid.Column="1"/>
         <TextBlock Grid.Row="7" Text="Signaling"/><TextBlock x:Name="SignalingText" Grid.Row="7" Grid.Column="1"/>

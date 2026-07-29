@@ -4,32 +4,10 @@
       xmlns:controls="using:SonicRelay.Windows.App.Controls">
   <ScrollViewer><StackPanel Padding="24" Spacing="12" MaxWidth="640" HorizontalAlignment="Left">
     <TextBlock FontSize="{StaticResource TitleFontSize}" FontWeight="SemiBold" Text="Connection"/>
+    <TextBlock x:Name="DeviceStatusText" Text="Publisher device identity unavailable"/>
+    <TextBlock x:Name="BackendText" Text="Backend not configured" TextWrapping="Wrap" Opacity="0.7"/>
 
     <controls:PairingCard x:Name="PairingCard"/>
-
-    <!-- Sign-in form: shown only while signed out. -->
-    <StackPanel x:Name="SignInPanel" Spacing="12">
-      <TextBlock Text="Configure the backend and sign in to prepare this Windows publisher." TextWrapping="Wrap"/>
-      <TextBox x:Name="BackendUrlBox" Header="Backend URL" Text="https://sonicrelay-api.hugodotnet.dev" PlaceholderText="https://relay.example.com/"/>
-      <TextBox x:Name="EmailBox" Header="Email" InputScope="EmailSmtpAddress"/>
-      <PasswordBox x:Name="PasswordBox" Header="Password"/>
-      <StackPanel Orientation="Horizontal" Spacing="12">
-        <Button x:Name="LoginButton" Content="Sign in and prepare device" Click="Login_Click" Style="{StaticResource AccentButtonStyle}"/>
-        <Button x:Name="CreateAccountButton" Content="Create account" Click="CreateAccount_Click"/>
-      </StackPanel>
-    </StackPanel>
-
-    <!-- Account summary: shown only while signed in. Just the email and a log-out action. -->
-    <StackPanel x:Name="AccountPanel" Spacing="12" Visibility="Collapsed">
-      <TextBlock Text="Signed in as" Opacity="0.7"/>
-      <TextBlock x:Name="AccountEmailText" FontSize="{StaticResource TitleFontSize}" FontWeight="SemiBold"/>
-      <StackPanel Orientation="Horizontal" Spacing="12">
-        <Button x:Name="LogoutButton" Content="Log out" Click="Logout_Click"/>
-        <Button x:Name="DeleteAccountButton" Content="Delete account" Click="DeleteAccount_Click"/>
-      </StackPanel>
-      <TextBlock Opacity="0.7" TextWrapping="Wrap"
-                 Text="Deleting your account revokes your devices and sessions and cannot be undone."/>
-    </StackPanel>
 
     <ProgressRing x:Name="BusyRing" Width="24" Height="24" IsActive="False" HorizontalAlignment="Left"/>
     <InfoBar x:Name="ErrorBar" Severity="Error" IsOpen="False" IsClosable="False"/>
