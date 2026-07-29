@@ -14,10 +14,12 @@ public sealed class DeviceIdentitySession : IDeviceAccessTokenProvider, IDisposa
     private readonly IDeviceCredentialStore credentialStore;
     private readonly string deviceName;
     private readonly TimeProvider timeProvider;
-    private readonly SemaphoreSlim gate = new(1, 1);
-    private string? accessToken;
-    private DateTimeOffset accessTokenExpiresAt;
+    private readonly object sync = new();
+    private readonly CancellationTokenSource lifetimeCancellation = new();
+    private CachedAccessToken? cachedAccessToken;
     private TokenExchange? tokenExchange;
+    private int identityInvalidated;
+    private int disposed;
 
     public DeviceIdentitySession(
         IDeviceIdentityApiClient apiClient,
@@ -33,31 +35,52 @@ public sealed class DeviceIdentitySession : IDeviceAccessTokenProvider, IDisposa
 
     public async Task<string> GetAccessTokenAsync(bool forceRefresh = false, CancellationToken cancellationToken = default)
     {
-        if (!forceRefresh && HasUsableCachedToken())
+        ThrowIfDisposed();
+        ThrowIfIdentityInvalidated();
+        if (!forceRefresh && GetUsableCachedToken() is { } cachedToken)
         {
-            return accessToken!;
+            return cachedToken.Value;
         }
 
-        await gate.WaitAsync(cancellationToken);
         Task<string> exchange;
-        try
+        lock (sync)
         {
-            if (!forceRefresh && HasUsableCachedToken())
+            ThrowIfDisposed();
+            ThrowIfIdentityInvalidated();
+            if (!forceRefresh && GetUsableCachedToken() is { } synchronizedCachedToken)
             {
-                return accessToken!;
+                return synchronizedCachedToken.Value;
             }
 
-            exchange = tokenExchange?.Completion ?? StartTokenExchange(cancellationToken);
-        }
-        finally
-        {
-            gate.Release();
+            exchange = tokenExchange?.Completion ?? StartTokenExchange();
         }
 
         return await exchange.WaitAsync(cancellationToken);
     }
 
-    public void Dispose() => gate.Dispose();
+    public void Dispose()
+    {
+        Task<string>? activeExchange;
+        lock (sync)
+        {
+            if (Interlocked.Exchange(ref disposed, 1) != 0) return;
+            activeExchange = tokenExchange?.Completion;
+        }
+
+        lifetimeCancellation.Cancel();
+        if (activeExchange is null)
+        {
+            lifetimeCancellation.Dispose();
+            return;
+        }
+
+        _ = activeExchange.ContinueWith(
+            static (_, state) => ((CancellationTokenSource)state!).Dispose(),
+            lifetimeCancellation,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
 
     public bool IsTransientFailure(Exception exception) =>
         exception is ApiClientException
@@ -65,21 +88,23 @@ public sealed class DeviceIdentitySession : IDeviceAccessTokenProvider, IDisposa
             Kind: ApiErrorKind.NetworkUnavailable or ApiErrorKind.BackendUnavailable
         };
 
-    private bool HasUsableCachedToken() =>
-        !string.IsNullOrWhiteSpace(accessToken)
-        && accessTokenExpiresAt > timeProvider.GetUtcNow().Add(ExpiryMargin);
-
-    private void ClearCachedToken()
+    private CachedAccessToken? GetUsableCachedToken()
     {
-        accessToken = null;
-        accessTokenExpiresAt = default;
+        var snapshot = Volatile.Read(ref cachedAccessToken);
+        return snapshot is not null
+            && !string.IsNullOrWhiteSpace(snapshot.Value)
+            && snapshot.ExpiresAt > timeProvider.GetUtcNow().Add(ExpiryMargin)
+                ? snapshot
+                : null;
     }
 
-    private Task<string> StartTokenExchange(CancellationToken cancellationToken)
+    private void ClearCachedToken() => Volatile.Write(ref cachedAccessToken, null);
+
+    private Task<string> StartTokenExchange()
     {
         var exchange = new TokenExchange();
         tokenExchange = exchange;
-        exchange.Completion = ExchangeTokenAsync(exchange, cancellationToken);
+        exchange.Completion = ExchangeTokenAsync(exchange, lifetimeCancellation.Token);
         return exchange.Completion;
     }
 
@@ -98,30 +123,41 @@ public sealed class DeviceIdentitySession : IDeviceAccessTokenProvider, IDisposa
             catch (ApiClientException exception) when (exception.Kind == ApiErrorKind.Unauthorized)
             {
                 ClearCachedToken();
-                await ClearCredentialAsync(cancellationToken);
+                Volatile.Write(ref identityInvalidated, 1);
+                await ClearCredentialAsync(CancellationToken.None);
                 throw;
             }
 
-            accessToken = token.AccessToken;
-            accessTokenExpiresAt = token.ExpiresAt;
-            return accessToken;
+            var snapshot = new CachedAccessToken(token.AccessToken, token.ExpiresAt);
+            Volatile.Write(ref cachedAccessToken, snapshot);
+            return snapshot.Value;
         }
         finally
         {
-            await gate.WaitAsync(CancellationToken.None);
-            try
+            lock (sync)
             {
                 if (ReferenceEquals(tokenExchange, exchange))
                 {
                     tokenExchange = null;
                 }
             }
-            finally
-            {
-                gate.Release();
-            }
         }
     }
+
+    private void ThrowIfDisposed() =>
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
+
+    private void ThrowIfIdentityInvalidated()
+    {
+        if (Volatile.Read(ref identityInvalidated) != 0)
+        {
+            throw new ApiClientException(
+                ApiErrorKind.Unauthorized,
+                "The publisher device identity was invalidated. Restart the publisher before bootstrapping again.");
+        }
+    }
+
+    private sealed record CachedAccessToken(string Value, DateTimeOffset ExpiresAt);
 
     private sealed class TokenExchange
     {

@@ -68,6 +68,20 @@ public sealed class DeviceIdentitySessionTests
     }
 
     [Fact]
+    public async Task Does_not_cache_a_blank_access_token()
+    {
+        var api = new StubDeviceIdentityApiClient
+        {
+            TokenResponses = new Queue<DeviceTokenResponse>([Token("   "), Token("access-2")])
+        };
+        var session = CreateSession(api, new MemoryDeviceCredentialStore(StoredCredential()), new FakeTimeProvider(Now));
+
+        Assert.Equal("   ", await session.GetAccessTokenAsync());
+        Assert.Equal("access-2", await session.GetAccessTokenAsync());
+        Assert.Equal(2, api.TokenCalls);
+    }
+
+    [Fact]
     public async Task Force_refresh_exchanges_even_when_the_cached_token_is_still_valid()
     {
         var api = new StubDeviceIdentityApiClient
@@ -122,6 +136,35 @@ public sealed class DeviceIdentitySessionTests
     }
 
     [Fact]
+    public async Task Cancelling_the_exchange_initiator_does_not_cancel_the_shared_exchange()
+    {
+        var exchangeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseExchange = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var api = new StubDeviceIdentityApiClient
+        {
+            TokenHandler = async (_, cancellationToken) =>
+            {
+                exchangeStarted.TrySetResult();
+                await releaseExchange.Task.WaitAsync(cancellationToken);
+                return Token("access-1");
+            }
+        };
+        var session = CreateSession(api, new MemoryDeviceCredentialStore(StoredCredential()), new FakeTimeProvider(Now));
+        using var initiatorCancellation = new CancellationTokenSource();
+
+        var initiatingCaller = session.GetAccessTokenAsync(cancellationToken: initiatorCancellation.Token);
+        await exchangeStarted.Task;
+        var waitingCaller = session.GetAccessTokenAsync();
+        initiatorCancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => initiatingCaller);
+        releaseExchange.SetResult();
+
+        Assert.Equal("access-1", await waitingCaller);
+        Assert.Equal(1, api.TokenCalls);
+    }
+
+    [Fact]
     public async Task Concurrent_forced_callers_share_one_transport_failure()
     {
         var exchangeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -162,14 +205,19 @@ public sealed class DeviceIdentitySessionTests
         var session = CreateSession(api, store);
 
         await Assert.ThrowsAsync<ApiClientException>(() => session.GetAccessTokenAsync());
+        var invalidated = await Assert.ThrowsAsync<ApiClientException>(() => session.GetAccessTokenAsync());
 
+        Assert.Equal(ApiErrorKind.Unauthorized, invalidated.Kind);
         Assert.Null(store.Credential);
         Assert.Equal(1, store.DeleteCalls);
+        Assert.Equal(0, api.BootstrapCalls);
+        Assert.Equal(1, api.TokenCalls);
     }
 
     [Fact]
-    public async Task Unauthorized_forced_refresh_does_not_leave_a_stale_cached_token_available()
+    public async Task Unauthorized_forced_refresh_invalidates_the_session_until_it_is_recreated()
     {
+        var store = new MemoryDeviceCredentialStore(StoredCredential());
         var api = new StubDeviceIdentityApiClient
         {
             BootstrapResponse = new BootstrapDeviceResponse(DeviceId, "replacement-secret", 2),
@@ -180,13 +228,19 @@ public sealed class DeviceIdentitySessionTests
                 Token("replacement-access")
             ])
         };
-        var session = CreateSession(api, new MemoryDeviceCredentialStore(StoredCredential()), new FakeTimeProvider(Now));
+        var session = CreateSession(api, store, new FakeTimeProvider(Now));
 
         Assert.Equal("cached-access", await session.GetAccessTokenAsync());
         await Assert.ThrowsAsync<ApiClientException>(() => session.GetAccessTokenAsync(forceRefresh: true));
-        var refreshed = await session.GetAccessTokenAsync();
+        var invalidated = await Assert.ThrowsAsync<ApiClientException>(() => session.GetAccessTokenAsync());
 
-        Assert.Equal("replacement-access", refreshed);
+        Assert.Equal(ApiErrorKind.Unauthorized, invalidated.Kind);
+        Assert.Equal(0, api.BootstrapCalls);
+        Assert.Equal(2, api.TokenCalls);
+
+        var recreatedSession = CreateSession(api, store, new FakeTimeProvider(Now));
+
+        Assert.Equal("replacement-access", await recreatedSession.GetAccessTokenAsync());
         Assert.Equal(1, api.BootstrapCalls);
         Assert.Equal(3, api.TokenCalls);
     }

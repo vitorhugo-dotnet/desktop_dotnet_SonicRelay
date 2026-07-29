@@ -31,6 +31,38 @@ public sealed class DiagnosticRedactorTests
     }
 
     [Fact]
+    public void RedactRemovesExactDeviceAndPairingSecretAssignments()
+    {
+        const string input = "credentialSecret=device-secret qrPayload=qr-secret pairingCode=pair-secret sessionCode=session-secret code=short-secret statusCode=401 status-code=202 source-code=E1 codec=opus";
+
+        var result = DiagnosticRedactor.Redact(input);
+
+        Assert.DoesNotContain("device-secret", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("qr-secret", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("pair-secret", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("session-secret", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("short-secret", result, StringComparison.Ordinal);
+        Assert.Contains("statusCode=401", result, StringComparison.Ordinal);
+        Assert.Contains("status-code=202", result, StringComparison.Ordinal);
+        Assert.Contains("source-code=E1", result, StringComparison.Ordinal);
+        Assert.Contains("codec=opus", result, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("credentialSecret", true)]
+    [InlineData("qrPayload", true)]
+    [InlineData("pairingCode", true)]
+    [InlineData("sessionCode", true)]
+    [InlineData("code", true)]
+    [InlineData("statusCode", false)]
+    [InlineData("sourceCode", false)]
+    [InlineData("codec", false)]
+    public void SensitiveKeysMatchSecretSemanticsExactly(string key, bool expected)
+    {
+        Assert.Equal(expected, DiagnosticRedactor.IsSensitiveKey(key));
+    }
+
+    [Fact]
     public void MaskIdentifierKeepsOnlyEdges()
     {
         Assert.Equal("1234…cdef", DiagnosticRedactor.MaskIdentifier("12345678-90ab-cdef"));
