@@ -157,7 +157,7 @@ public sealed class SignalingClient : ISignalingClient
 
         if (pendingReceive is not null)
         {
-            await IgnoreCancellationAsync(pendingReceive);
+            await ObserveReceiveCompletionAsync(pendingReceive);
         }
         await DisposeConnectionAsync();
         ClearActiveIdentity();
@@ -273,7 +273,18 @@ public sealed class SignalingClient : ISignalingClient
             }
             catch (Exception exception) when (IsTransient(exception))
             {
-                switch (await TryReconnectAsync(cancellationToken))
+                ReconnectOutcome outcome;
+                try
+                {
+                    outcome = await TryReconnectAsync(cancellationToken);
+                }
+                catch
+                {
+                    SetState(SignalingConnectionState.Faulted);
+                    throw;
+                }
+
+                switch (outcome)
                 {
                     case ReconnectOutcome.Reconnected:
                         break;
@@ -398,8 +409,9 @@ public sealed class SignalingClient : ISignalingClient
         or SignalingConnectionState.Reconnecting
         or SignalingConnectionState.Closing;
 
-    private static bool IsTransient(Exception exception) =>
-        exception is WebSocketException or IOException;
+    private bool IsTransient(Exception exception) =>
+        exception is WebSocketException or IOException
+        || accessTokenProvider.IsTransientFailure(exception);
 
     private void SetState(SignalingConnectionState state)
     {
@@ -425,13 +437,13 @@ public sealed class SignalingClient : ISignalingClient
         activeSessionId = null;
     }
 
-    private static async Task IgnoreCancellationAsync(Task task)
+    private static async Task ObserveReceiveCompletionAsync(Task task)
     {
         try
         {
             await task;
         }
-        catch (OperationCanceledException)
+        catch (Exception)
         {
         }
     }

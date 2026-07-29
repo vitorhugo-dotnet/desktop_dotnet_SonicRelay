@@ -209,6 +209,25 @@ public sealed class DeviceIdentitySessionTests
         Assert.Equal(0, api.BootstrapCalls);
     }
 
+    [Theory]
+    [InlineData(ApiErrorKind.NetworkUnavailable, true)]
+    [InlineData(ApiErrorKind.BackendUnavailable, true)]
+    [InlineData(ApiErrorKind.Unauthorized, false)]
+    [InlineData(ApiErrorKind.Forbidden, false)]
+    [InlineData(ApiErrorKind.Unknown, false)]
+    public void Token_failure_classification_retries_only_transient_transport_failures(
+        ApiErrorKind kind,
+        bool expectedTransient)
+    {
+        var session = CreateSession(
+            new StubDeviceIdentityApiClient(),
+            new MemoryDeviceCredentialStore(StoredCredential()));
+
+        var transient = session.IsTransientFailure(new ApiClientException(kind, "token failure"));
+
+        Assert.Equal(expectedTransient, transient);
+    }
+
     [Fact]
     public async Task Api_client_uses_the_backend_routes_and_json_contract()
     {

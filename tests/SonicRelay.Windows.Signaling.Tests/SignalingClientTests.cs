@@ -131,6 +131,65 @@ public sealed class SignalingClientTests
     }
 
     [Fact]
+    public async Task TransientTokenFailureDuringReconnectRetriesAndUsesNextToken()
+    {
+        var first = new FakeWebSocketConnection();
+        var replacement = new FakeWebSocketConnection();
+        var factory = new FakeWebSocketFactory(first, replacement);
+        var delay = new ImmediateReconnectDelay();
+        var transientFailure = new InvalidOperationException("token service unavailable");
+        var tokens = new ScriptedAccessTokenProvider(
+            transientFailure,
+            "token-1",
+            transientFailure,
+            "token-2");
+        var client = CreateClient(factory, delay: delay, tokenProvider: tokens);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await client.ConnectAsync("session-1");
+
+        first.QueueClose(WebSocketCloseStatus.EndpointUnavailable);
+        await WaitUntilAsync(
+            () => factory.CreatedCount == 2 && client.State == SignalingConnectionState.Connected,
+            timeout.Token);
+
+        Assert.Equal([TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2)], delay.Delays);
+        Assert.Equal("token-2", replacement.AccessToken);
+        Assert.Equal(3, tokens.CallCount);
+        await client.CloseAsync();
+        await client.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task PermanentTokenFailureDoesNotPreventCloseOrReleaseSessionIdentity()
+    {
+        var first = new FakeWebSocketConnection();
+        var fresh = new FakeWebSocketConnection();
+        var factory = new FakeWebSocketFactory(first, fresh);
+        var invalidCredential = new InvalidOperationException("credential revoked");
+        var tokens = new ScriptedAccessTokenProvider(
+            transientFailure: null,
+            "token-1",
+            invalidCredential,
+            "token-2");
+        var client = CreateClient(factory, tokenProvider: tokens);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await client.ConnectAsync("session-1");
+
+        first.QueueClose(WebSocketCloseStatus.EndpointUnavailable);
+        await WaitUntilAsync(() => tokens.CallCount == 2, timeout.Token);
+        await WaitUntilAsync(() => client.State == SignalingConnectionState.Faulted, timeout.Token);
+
+        await client.CloseAsync();
+
+        Assert.Equal(SignalingConnectionState.Closed, client.State);
+        await client.ConnectAsync("session-2");
+        Assert.Equal(SignalingConnectionState.Connected, client.State);
+        Assert.Equal("token-2", fresh.AccessToken);
+        await client.CloseAsync();
+        await client.DisposeAsync();
+    }
+
+    [Fact]
     public async Task ReconnectStopsAfterConfiguredMaxAttempts()
     {
         var initial = new FakeWebSocketConnection();
@@ -278,6 +337,28 @@ public sealed class SignalingClientTests
             ForceRefreshCalls.Add(forceRefresh);
             return Task.FromResult(tokens.Count > 1 ? tokens.Dequeue() : tokens.Peek());
         }
+    }
+
+    private sealed class ScriptedAccessTokenProvider(
+        Exception? transientFailure,
+        params object[] outcomes) : IDeviceAccessTokenProvider
+    {
+        private readonly Queue<object> outcomes = new(outcomes);
+        public int CallCount { get; private set; }
+
+        public Task<string> GetAccessTokenAsync(
+            bool forceRefresh = false,
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            var outcome = outcomes.Count > 1 ? outcomes.Dequeue() : outcomes.Peek();
+            return outcome is Exception exception
+                ? Task.FromException<string>(exception)
+                : Task.FromResult((string)outcome);
+        }
+
+        public bool IsTransientFailure(Exception exception) =>
+            ReferenceEquals(exception, transientFailure);
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition, CancellationToken cancellationToken)

@@ -59,6 +59,12 @@ public sealed class DeviceIdentitySession : IDeviceAccessTokenProvider, IDisposa
 
     public void Dispose() => gate.Dispose();
 
+    public bool IsTransientFailure(Exception exception) =>
+        exception is ApiClientException
+        {
+            Kind: ApiErrorKind.NetworkUnavailable or ApiErrorKind.BackendUnavailable
+        };
+
     private bool HasUsableCachedToken() =>
         !string.IsNullOrWhiteSpace(accessToken)
         && accessTokenExpiresAt > timeProvider.GetUtcNow().Add(ExpiryMargin);
