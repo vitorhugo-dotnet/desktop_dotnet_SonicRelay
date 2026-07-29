@@ -40,6 +40,24 @@ public sealed class DeviceCredentialStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task Failed_temporary_write_leaves_the_existing_credential_readable()
+    {
+        var store = CreateStore();
+        var existing = new DeviceCredential(DeviceId, "old-secret", 1, "windows_publisher", "windows");
+        var replacement = existing with { CredentialSecret = "new-secret", CredentialVersion = 2 };
+        Assert.True((await store.SaveAsync(existing)).Succeeded);
+
+        await using var lockHandle = new FileStream(
+            Path.Combine(_directory, "device-credential.dat.tmp"),
+            FileMode.Create,
+            FileAccess.Write,
+            FileShare.None);
+
+        Assert.False((await store.SaveAsync(replacement)).Succeeded);
+        Assert.Equal(existing, (await store.LoadAsync()).Credential);
+    }
+
+    [Fact]
     public async Task Storage_failures_never_include_the_credential_secret()
     {
         var store = new UserScopedDeviceCredentialStore(_directory, new FailingProtector());
