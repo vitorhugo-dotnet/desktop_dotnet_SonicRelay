@@ -117,7 +117,7 @@ if ($missingManualPairingSurface.Count -gt 0) {
 }
 
 $requiredPairingLifecyclePatterns = @(
-    '(?s)private void OnLoaded\(.*?ClearExpiredChallenge\(DateTimeOffset\.UtcNow\).*?viewModel\.StateChanged \+= OnStateChanged;'
+    '(?s)private void OnLoaded\(.*?viewModel\.StateChanged -= OnStateChanged;.*?ClearExpiredChallenge\(DateTimeOffset\.UtcNow\).*?viewModel\.StateChanged \+= OnStateChanged;'
     '(?s)private void OnUnloaded\(.*?viewModel\.StateChanged -= OnStateChanged;'
 )
 $missingPairingLifecycle = $requiredPairingLifecyclePatterns | Where-Object {
@@ -145,6 +145,7 @@ if (Test-Path -LiteralPath $releaseSmokeTestPath) {
         'DPAPI CurrentUser'
         'DeviceBearer'
         'QR code'
+        'pairing challenge ID'
         'pairing code'
         'session join code'
         'reset device identity'
@@ -162,7 +163,7 @@ if (Test-Path -LiteralPath $releaseSmokeTestPath) {
         Write-Error "Missing release smoke-test gates:`n$($missingReleaseSmokeTestGates -join "`n")"
     }
 
-    $forbiddenReleaseSmokeTestIdentity = @('attempt login', 'tokens.dat', '/auth/login', '/auth/refresh', '/auth/me')
+    $forbiddenReleaseSmokeTestIdentity = @('attempt login', 'tokens.dat', '/auth/login', '/auth/register', '/auth/refresh', '/auth/me')
     $staleReleaseSmokeTestIdentity = $forbiddenReleaseSmokeTestIdentity | Where-Object {
         $releaseSmokeTest.IndexOf($_, [StringComparison]::OrdinalIgnoreCase) -ge 0
     }
@@ -177,7 +178,12 @@ $requiredPublisherDeviceIdentity = @(
     '/api/devices/token'
     'DeviceBearer'
     'device-credential.dat'
+    'DPAPI'
+    'CurrentUser'
+    'QR'
     'pairing challenge'
+    'pairing challenge ID'
+    'pairing code'
     'session join code'
 )
 $missingPublisherDeviceIdentity = $requiredPublisherDeviceIdentity | Where-Object {
@@ -186,7 +192,7 @@ $missingPublisherDeviceIdentity = $requiredPublisherDeviceIdentity | Where-Objec
 if ($missingPublisherDeviceIdentity.Count -gt 0) {
     Write-Error "Publisher specification is missing device-first contracts:`n$($missingPublisherDeviceIdentity -join "`n")"
 }
-$forbiddenPublisherIdentity = @('/auth/login', '/auth/refresh', '/auth/me', 'tokens.dat', 'UserScopedTokenStore', 'RestoreSessionAsync')
+$forbiddenPublisherIdentity = @('/auth/login', '/auth/register', '/auth/refresh', '/auth/me', 'tokens.dat', 'UserScopedTokenStore', 'RestoreSessionAsync')
 $stalePublisherIdentity = $forbiddenPublisherIdentity | Where-Object {
     $publisherSpecification.IndexOf($_, [StringComparison]::OrdinalIgnoreCase) -ge 0
 }
