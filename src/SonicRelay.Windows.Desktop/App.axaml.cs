@@ -56,9 +56,11 @@ public partial class App : Application
             var runtime = DesktopRuntimeFactory.Create(configuration.BackendBaseUrl);
             if (runtime is null) return; // unsupported platform: stay on the sign-in surface
             viewModel.Attach(runtime);
-            // Restore a persisted session (refresh + /auth/me) so a returning user lands on the
-            // dashboard; a missing/expired session simply leaves the sign-in surface showing.
-            await runtime.Workflow.RestoreSessionAsync();
+            // Bootstrap (or reuse) this device's persistent credential and exchange it for a
+            // short-lived access token so a returning device reconnects automatically instead
+            // of re-pairing (issue #26). A missing/unreachable backend simply leaves the
+            // sign-in surface showing.
+            await runtime.InitializeDeviceIdentityAsync();
         }
         catch
         {
