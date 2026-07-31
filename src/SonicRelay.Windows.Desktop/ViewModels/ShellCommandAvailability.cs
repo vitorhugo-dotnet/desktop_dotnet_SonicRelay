@@ -9,8 +9,8 @@ namespace SonicRelay.Windows.Desktop.ViewModels;
 /// <see cref="PublisherUiCapabilities"/>. That difference matters: a session can be capturing
 /// while still in <see cref="PublisherUiState.WaitingViewer"/> (audio started before a viewer
 /// connected), where the capability set reports <c>CanStopAudio: false</c> even though the
-/// snapshot correctly reports it <c>true</c>. Retry and logout have no snapshot guard, so they
-/// stay capability-based (plus a not-busy check). All actions require an attached workflow.
+/// snapshot correctly reports it <c>true</c>. Retry has no snapshot guard, so it stays
+/// capability-based (plus a not-busy check). All actions require an attached workflow.
 /// </summary>
 public static class ShellCommandAvailability
 {
@@ -28,7 +28,4 @@ public static class ShellCommandAvailability
 
     public static bool Retry(PublisherSnapshot? snapshot, PublisherUiCapabilities capabilities, bool hasWorkflow) =>
         hasWorkflow && snapshot?.IsBusy != true && capabilities.CanRetry;
-
-    public static bool Logout(PublisherSnapshot? snapshot, PublisherUiCapabilities capabilities, bool hasWorkflow) =>
-        hasWorkflow && snapshot?.IsBusy != true && capabilities.CanLogout;
 }

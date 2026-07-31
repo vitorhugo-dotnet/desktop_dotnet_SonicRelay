@@ -1,5 +1,6 @@
 using Avalonia.Threading;
 using SonicRelay.Windows.Presentation;
+using SonicRelay.Windows.Presentation.Pairing;
 using SonicRelay.Windows.WebRtc;
 
 namespace SonicRelay.Windows.Desktop.ViewModels;
@@ -10,8 +11,8 @@ namespace SonicRelay.Windows.Desktop.ViewModels;
 /// into <see cref="PublisherWorkflow"/> calls once a runtime is attached. With no runtime
 /// (the standalone preview launch) the actions are disabled and the shell renders the
 /// representative snapshot, so the layout and design system stay verifiable without a
-/// backend. Attaching a live runtime — tray, reconnection and sign-in flow — is the next
-/// phase-2 slice (issue #32); this type already exposes the seam for it.
+/// backend. Attaching a live runtime shows the pairing surface until the device identity
+/// bootstraps, then the dashboard (issue #26).
 /// </summary>
 public sealed class MainWindowViewModel : ViewModelBase
 {
@@ -19,17 +20,14 @@ public sealed class MainWindowViewModel : ViewModelBase
     private PublisherWorkflow? workflow;
     private IWebRtcPublisher? webRtc;
     private PublisherSnapshot? snapshot;
-    private bool showLogin = true;
+    private PairingViewModel? pairing;
+    private bool showPairing = true;
     private NavigationItem selectedNavigation;
     private bool clearLogsArmed;
     private string? diagnosticsActionMessage;
 
     public MainWindowViewModel()
     {
-        Auth = new AuthViewModel(
-            (email, password) => Run(w => w.LoginAsync(email, password)),
-            (email, password, confirm) => Run(w => w.RegisterAsync(email, password, confirm)));
-
         Navigation =
         [
             new NavigationItem(PageKey.Dashboard, "◧", "Dashboard"),
@@ -45,14 +43,23 @@ public sealed class MainWindowViewModel : ViewModelBase
         StopAudioCommand = new RelayCommand(() => Run(w => w.StopAudioAsync()), () => ShellCommandAvailability.StopAudio(snapshot, HasWorkflow));
         EndSessionCommand = new RelayCommand(() => Run(w => w.EndSessionAsync()), () => ShellCommandAvailability.EndSession(snapshot, HasWorkflow));
         RetryCommand = new RelayCommand(() => Run(w => w.ReconnectSignalingAsync()), () => ShellCommandAvailability.Retry(snapshot, Shell.Capabilities, HasWorkflow));
-        LogoutCommand = new RelayCommand(() => Run(w => w.LogoutAsync()), () => ShellCommandAvailability.Logout(snapshot, Shell.Capabilities, HasWorkflow));
         ExportDiagnosticsCommand = new RelayCommand(ExportDiagnosticsAsync, () => runtime is not null);
         ClearDiagnosticsCommand = new RelayCommand(ClearDiagnosticsAsync, () => runtime is not null);
     }
 
     public IReadOnlyList<NavigationItem> Navigation { get; }
     public DashboardShellViewModel Shell { get; } = new();
-    public AuthViewModel Auth { get; }
+
+    /// <summary>
+    /// The active pairing surface's data source: null until the runtime's device identity
+    /// bootstraps (<see cref="PublisherRuntime.Pairing"/>), so the pairing view renders its
+    /// disconnected placeholder state until then.
+    /// </summary>
+    public PairingViewModel? Pairing
+    {
+        get => pairing;
+        private set => SetProperty(ref pairing, value);
+    }
 
     /// <summary>Settings and Audio surfaces; rebuilt from the runtime's stores on <see cref="Attach"/>,
     /// disconnected placeholders otherwise.</summary>
@@ -104,17 +111,18 @@ public sealed class MainWindowViewModel : ViewModelBase
     };
 
     /// <summary>
-    /// Whether the sign-in surface (rather than the dashboard) should be shown. Derived from the
-    /// snapshot so a successful sign-in flips the shell to the dashboard automatically.
+    /// Whether the pairing surface (rather than the dashboard) should be shown. Derived from
+    /// the snapshot so a successful device-identity bootstrap flips the shell to the
+    /// dashboard automatically.
     /// </summary>
-    public bool ShowLogin
+    public bool ShowPairing
     {
-        get => showLogin;
-        private set => SetProperty(ref showLogin, value);
+        get => showPairing;
+        private set => SetProperty(ref showPairing, value);
     }
 
-    /// <summary>Pure rule: show login whenever there is no authenticated snapshot.</summary>
-    public static bool ShouldShowLogin(PublisherSnapshot? snapshot) =>
+    /// <summary>Pure rule: show pairing whenever there is no device-identity snapshot yet.</summary>
+    public static bool ShouldShowPairing(PublisherSnapshot? snapshot) =>
         snapshot is null || !snapshot.IsAuthenticated;
 
     public bool ClearLogsArmed
@@ -146,7 +154,6 @@ public sealed class MainWindowViewModel : ViewModelBase
     public RelayCommand StopAudioCommand { get; }
     public RelayCommand EndSessionCommand { get; }
     public RelayCommand RetryCommand { get; }
-    public RelayCommand LogoutCommand { get; }
     public RelayCommand ExportDiagnosticsCommand { get; }
     public RelayCommand ClearDiagnosticsCommand { get; }
 
@@ -191,11 +198,11 @@ public sealed class MainWindowViewModel : ViewModelBase
     private void Apply(PublisherSnapshot? state, WebRtcPublisherDiagnostics? diagnostics, bool forceRelay)
     {
         Shell.Update(state, diagnostics, forceRelay);
-        ShowLogin = ShouldShowLogin(state);
-        // The sign-in surface reads its busy/error state from the workflow snapshot; the
-        // workflow owns credential validation and the friendly error messages.
-        Auth.IsBusy = state?.IsBusy ?? false;
-        Auth.ErrorMessage = ShowLogin ? state?.ErrorMessage : null;
+        ShowPairing = ShouldShowPairing(state);
+        // The runtime only creates its PairingViewModel once device-identity bootstrap
+        // succeeds (PublisherRuntime.InitializeDeviceIdentityAsync), so this stays null —
+        // and the pairing view renders its disconnected placeholder — until then.
+        Pairing = runtime?.Pairing;
         RaiseCommandStates();
         RaisePropertyChanged(nameof(KeepRunningInTray));
         Changed?.Invoke();
@@ -258,7 +265,6 @@ public sealed class MainWindowViewModel : ViewModelBase
         StopAudioCommand.RaiseCanExecuteChanged();
         EndSessionCommand.RaiseCanExecuteChanged();
         RetryCommand.RaiseCanExecuteChanged();
-        LogoutCommand.RaiseCanExecuteChanged();
         ExportDiagnosticsCommand.RaiseCanExecuteChanged();
         ClearDiagnosticsCommand.RaiseCanExecuteChanged();
     }
