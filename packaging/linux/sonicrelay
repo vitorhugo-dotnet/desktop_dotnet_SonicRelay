@@ -1,0 +1,4 @@
+#!/bin/sh
+# Exec wrapper installed at /usr/bin/sonicrelay (issue #40): keeps the desktop entry's
+# Exec=sonicrelay stable regardless of where the published app binary actually lives.
+exec /usr/lib/sonicrelay/SonicRelay.Windows.Desktop "$@"

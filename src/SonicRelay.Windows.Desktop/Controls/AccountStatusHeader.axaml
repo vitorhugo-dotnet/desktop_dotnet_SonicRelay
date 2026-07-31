@@ -1,0 +1,40 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="using:SonicRelay.Windows.Desktop.Controls"
+             xmlns:vm="using:SonicRelay.Windows.Desktop.ViewModels"
+             x:Class="SonicRelay.Windows.Desktop.Controls.AccountStatusHeader"
+             x:Name="Root"
+             x:DataType="vm:DashboardShellViewModel">
+  <StackPanel Orientation="Horizontal" Spacing="16" VerticalAlignment="Center">
+    <controls:ConnectionStatusBadge Text="{Binding GlobalStatusText}"
+                                    Badge="{Binding GlobalStatusBadge}"
+                                    VerticalAlignment="Center" />
+
+    <Border Width="1" Background="{DynamicResource Sonic.DividerBrush}" Margin="0,4" />
+
+    <Border Width="34" Height="34"
+            CornerRadius="{StaticResource Sonic.RadiusPill}"
+            Background="{DynamicResource Sonic.AccentBlueDarkBrush}"
+            AutomationProperties.Name="{Binding AccountLabel}">
+      <TextBlock Text="{Binding AccountInitials}"
+                 FontSize="{StaticResource Sonic.FontSizeLabel}"
+                 FontWeight="SemiBold"
+                 Foreground="{DynamicResource Sonic.TextPrimaryBrush}"
+                 HorizontalAlignment="Center" VerticalAlignment="Center" />
+    </Border>
+
+    <StackPanel Spacing="1" VerticalAlignment="Center">
+      <TextBlock Text="{Binding AccountLabel}"
+                 FontSize="{StaticResource Sonic.FontSizeLabel}"
+                 FontWeight="SemiBold"
+                 Foreground="{DynamicResource Sonic.TextPrimaryBrush}" />
+      <TextBlock Text="{Binding UiStateText}"
+                 Classes="metric-label" />
+    </StackPanel>
+
+    <Button Classes="ghost" Content="Sign out"
+            VerticalAlignment="Center"
+            Command="{Binding SignOutCommand, ElementName=Root}"
+            ToolTip.Tip="Sign out of this publisher" />
+  </StackPanel>
+</UserControl>

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=SonicRelay Publisher
+Comment=Publish desktop audio to SonicRelay viewers
+Exec=sonicrelay
+Icon=sonicrelay
+Terminal=false
+StartupWMClass=sonicrelay
+Categories=Audio;Network;Utility;

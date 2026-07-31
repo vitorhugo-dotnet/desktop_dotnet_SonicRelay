@@ -1,0 +1,54 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:SonicRelay.Windows.Desktop.ViewModels"
+             xmlns:audio="using:SonicRelay.Windows.Core.Audio"
+             x:Class="SonicRelay.Windows.Desktop.Controls.SettingsView"
+             x:DataType="vm:SettingsViewModel">
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+    <StackPanel Margin="24" Spacing="16" MaxWidth="620" HorizontalAlignment="Left">
+
+      <TextBlock Classes="metric-label"
+                 IsVisible="{Binding !IsConnected}"
+                 Text="Sign in to a backend to manage settings." />
+
+      <Border Classes="card" IsVisible="{Binding IsConnected}">
+        <StackPanel Spacing="16">
+          <TextBlock Classes="card-title" Text="Connection" />
+          <StackPanel Spacing="4">
+            <TextBlock Classes="metric-label" Text="Backend" />
+            <TextBlock Classes="mono" Text="{Binding BackendUrl}"
+                       Foreground="{DynamicResource Sonic.TextPrimaryBrush}" TextWrapping="Wrap" />
+          </StackPanel>
+          <Grid ColumnDefinitions="*,Auto">
+            <StackPanel Spacing="2" VerticalAlignment="Center">
+              <TextBlock Text="Force relay (TURN only)"
+                         Foreground="{DynamicResource Sonic.TextPrimaryBrush}"
+                         FontSize="{StaticResource Sonic.FontSizeBody}" />
+              <TextBlock Classes="metric-label" Text="Route media through the TURN relay instead of a direct path." />
+            </StackPanel>
+            <ToggleSwitch Grid.Column="1" IsChecked="{Binding ForceRelay}"
+                          AutomationProperties.Name="Force relay (TURN only)" />
+          </Grid>
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card" IsVisible="{Binding IsConnected}">
+        <StackPanel Spacing="12">
+          <TextBlock Classes="card-title" Text="Audio quality" />
+          <TextBlock Classes="metric-label" Text="Opus encode profile; applies to the next stream." />
+          <ComboBox ItemsSource="{Binding Profiles}"
+                    SelectedItem="{Binding SelectedProfile}"
+                    HorizontalAlignment="Stretch"
+                    AutomationProperties.Name="Audio quality profile">
+            <ComboBox.ItemTemplate>
+              <DataTemplate x:DataType="audio:AudioQualityProfile">
+                <TextBlock Text="{Binding DisplayName}" />
+              </DataTemplate>
+            </ComboBox.ItemTemplate>
+          </ComboBox>
+        </StackPanel>
+      </Border>
+
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

@@ -4,12 +4,12 @@
 
 ```mermaid
 flowchart TD
-    App[SonicRelay.Windows.App] --> Presentation[SonicRelay.Windows.Presentation]
-    App --> Core[SonicRelay.Windows.Core]
-    App --> ApiClient[SonicRelay.Windows.ApiClient]
-    App --> Signaling[SonicRelay.Windows.Signaling]
-    App --> Audio[SonicRelay.Windows.Audio]
-    App --> WebRtc[SonicRelay.Windows.WebRtc]
+    Desktop[SonicRelay.Windows.Desktop] --> Presentation[SonicRelay.Windows.Presentation]
+    Desktop --> Core[SonicRelay.Windows.Core]
+    Desktop --> ApiClient[SonicRelay.Windows.ApiClient]
+    Desktop --> Signaling[SonicRelay.Windows.Signaling]
+    Desktop --> Audio[SonicRelay.Windows.Audio]
+    Desktop --> WebRtc[SonicRelay.Windows.WebRtc]
     Presentation --> Core
     Presentation --> ApiClient
     Presentation --> Signaling
@@ -22,7 +22,7 @@ flowchart TD
     PresentationTests[SonicRelay.Windows.Presentation.Tests] --> Presentation
 ```
 
-- **App** is the WinUI 3 shell: window/tray/notification platform adapters, XAML pages, and nothing that another desktop shell would need to duplicate.
+- **Desktop** is the Avalonia UI shell: the cross-platform window/tray/pages, plus the Windows platform adapters (WASAPI capture composition, tray). It replaced the original WinUI 3 shell once the Avalonia shell reached functional parity (issue #32); the WinUI project has been retired.
 - **Presentation** is the shared, platform-neutral application layer: the publisher workflow, runtime composition (`PublisherRuntime`), capture→WebRTC pump (`WebRtcAudioBridge`), view models, the interface state machine (`PublisherUiState`), and the platform contracts under `Presentation/Platform`.
 - **Core** will hold application-independent domain state and rules.
 - **ApiClient** will implement typed backend HTTP communication.
@@ -57,10 +57,10 @@ never mixing a UI rewrite with a new audio-capture implementation.
 Target layout:
 
 ```text
-SonicRelay.Desktop            shared Avalonia UI (future)
+SonicRelay.Windows.Desktop       shared Avalonia UI shell (Windows today, Linux later)
 SonicRelay.Windows.Presentation  shared workflow, runtime composition, view models, UI states
 SonicRelay.Windows.{Core, ApiClient, Signaling, WebRtc, Audio}  shared capabilities
-Platform adapters (Windows)   WASAPI loopback, Win32 tray, WinUI window lifecycle
+Platform adapters (Windows)   WASAPI loopback, Avalonia tray, window lifecycle
 Platform adapters (Linux)     PipeWire capture, StatusNotifier tray, XDG autostart (future)
 ```
 
@@ -84,6 +84,54 @@ project), each implemented per platform:
 Adapters are composed at the shell's composition root (today `App`/`MainWindow`
 construct the Windows adapters and hand `IAudioCaptureService` to
 `PublisherRuntime.Create`); the shared layer only ever sees the contracts.
+
+### Linux audio adapter (issue #32, PR 1 of the Linux design)
+
+`SonicRelay.Platform.Linux` implements `IAudioCaptureBackend` and
+`IAudioOutputDeviceProbe` over PipeWire/WirePlumber (`pw-dump`, `wpctl
+inspect`, `pw-record`), following
+[`2026-07-14-linux-desktop-publisher-design.md`](superpowers/specs/2026-07-14-linux-desktop-publisher-design.md).
+It is proven against the shared `AudioCaptureService`/`WebRtcAudioBridge`
+pipeline by unit and integration tests using fake process runners.
+
+### Linux desktop composition (issue #32, PR 2 of the Linux design)
+
+`DesktopRuntimeFactory` (`src/SonicRelay.Windows.Desktop/DesktopRuntimeFactory.cs`) is
+the platform composition root: on Windows it composes WASAPI capture with DPAPI
+token storage (unchanged); on Linux it composes `SonicRelay.Platform.Linux`'s
+`PipeWireProcessBackend`/`PipeWireOutputDeviceProbe` with a new Secret-Service-backed
+`SecretServiceTokenStore` (falling back to an in-memory, session-only store when
+Secret Service is unavailable — never a plaintext file). `App.axaml.cs` now attaches
+a real runtime on both platforms instead of falling back to
+`MainWindowViewModel.CreatePreview()` on Linux; `CreatePreview()` remains only for
+the Avalonia designer and headless render tests.
+
+Not yet covered: XDG-specific config/state/cache directory layout (the existing
+`Environment.SpecialFolder.LocalApplicationData`-based paths already resolve
+correctly on Linux via .NET's BCL, so this was not blocking), and user-visible
+actionable startup error messaging when a Linux capture dependency is missing
+(today it silently falls back to the sign-in surface, matching existing Windows
+behavior — not a regression, but short of the design spec's "actionable platform
+error" ask). Manual, real-desktop validation (Ubuntu 24.04, real PipeWire
+session, real Secret Service, real tray) has not been performed in this
+environment and remains the release gate per the design spec.
+
+### Linux CI and distribution (issue #32, PR 3 of the Linux design)
+
+`.github/workflows/ci.yml`'s `build-and-test` job runs as a required matrix
+across `windows-latest` and `ubuntu-24.04`; the Ubuntu leg additionally launches
+the actual published `linux-x64` binary under a virtual display as a startup
+smoke test. `.github/workflows/release.yml` adds a `linux-package` job that
+checks out the exact commit the Windows job just released, publishes
+self-contained `linux-x64`, and builds a portable `.tar.gz`, a `.deb`
+(Ubuntu/Debian), and a `.rpm` (Fedora, best effort) via
+[`packaging/linux/build-packages.sh`](../packaging/linux/build-packages.sh)
+using [`fpm`](https://fpm.readthedocs.io/) — sharing one FHS staging layout
+(`/usr/lib/sonicrelay`, `/usr/bin/sonicrelay`, the desktop entry, and the icon)
+across both package formats, and extending the release's single
+`checksums-sha256.txt` and notes rather than creating separate ones. See
+[`docs/linux-publisher.md`](linux-publisher.md) for installation, dependencies,
+supported systems, and known limitations.
 
 ### Interface states
 

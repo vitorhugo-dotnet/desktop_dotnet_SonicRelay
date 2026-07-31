@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>SonicRelay.Windows.Desktop</RootNamespace>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.3.2" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.2" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.2" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.2" />
+    <!-- Pin the patched DBus protocol lib: Avalonia.Desktop pulls a transitive
+         0.21.2 with advisory GHSA-xrw6-gwf8-vvr9. Linux-only; harmless on Windows. -->
+    <PackageReference Include="Tmds.DBus.Protocol" Version="0.21.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../SonicRelay.Platform.Linux/SonicRelay.Platform.Linux.csproj" />
+    <ProjectReference Include="../SonicRelay.Windows.ApiClient/SonicRelay.Windows.ApiClient.csproj" />
+    <ProjectReference Include="../SonicRelay.Windows.Audio/SonicRelay.Windows.Audio.csproj" />
+    <ProjectReference Include="../SonicRelay.Windows.Core/SonicRelay.Windows.Core.csproj" />
+    <ProjectReference Include="../SonicRelay.Windows.Presentation/SonicRelay.Windows.Presentation.csproj" />
+    <ProjectReference Include="../SonicRelay.Windows.Signaling/SonicRelay.Windows.Signaling.csproj" />
+    <ProjectReference Include="../SonicRelay.Windows.WebRtc/SonicRelay.Windows.WebRtc.csproj" />
+  </ItemGroup>
+</Project>

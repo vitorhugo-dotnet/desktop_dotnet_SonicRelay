@@ -1,0 +1,48 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="using:SonicRelay.Windows.Desktop.Controls"
+             xmlns:vm="using:SonicRelay.Windows.Desktop.ViewModels"
+             x:Class="SonicRelay.Windows.Desktop.Controls.InfrastructureStatusCard"
+             x:DataType="vm:DashboardShellViewModel">
+  <Border Classes="card">
+    <StackPanel Spacing="14">
+      <TextBlock Classes="card-title" Text="Signal Infrastructure" />
+
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock Classes="metric-label" Text="Session" VerticalAlignment="Center" />
+        <controls:ConnectionStatusBadge Grid.Column="1"
+                                        Text="{Binding SessionStatusText}"
+                                        Badge="{Binding SessionStatusBadge}" />
+      </Grid>
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock Classes="metric-label" Text="Signaling" VerticalAlignment="Center" />
+        <controls:ConnectionStatusBadge Grid.Column="1"
+                                        Text="{Binding SignalingStatusText}"
+                                        Badge="{Binding SignalingStatusBadge}" />
+      </Grid>
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock Classes="metric-label" Text="WebRTC / ICE" VerticalAlignment="Center" />
+        <controls:ConnectionStatusBadge Grid.Column="1"
+                                        Text="{Binding WebRtcStatusText}"
+                                        Badge="{Binding WebRtcStatusBadge}" />
+      </Grid>
+
+      <Border Height="1" Background="{DynamicResource Sonic.DividerBrush}" Margin="0,2" />
+
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock Classes="metric-label" Text="Mode" VerticalAlignment="Center" />
+        <TextBlock Grid.Column="1"
+                   Foreground="{DynamicResource Sonic.TextPrimaryBrush}"
+                   FontSize="{StaticResource Sonic.FontSizeBody}" FontWeight="SemiBold"
+                   Text="{Binding ConnectionModeText}" />
+      </Grid>
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock Classes="metric-label" Text="Viewers" VerticalAlignment="Center" />
+        <TextBlock Grid.Column="1"
+                   Foreground="{DynamicResource Sonic.TextPrimaryBrush}"
+                   FontSize="{StaticResource Sonic.FontSizeBody}" FontWeight="SemiBold"
+                   Text="{Binding ViewerCountText}" />
+      </Grid>
+    </StackPanel>
+  </Border>
+</UserControl>

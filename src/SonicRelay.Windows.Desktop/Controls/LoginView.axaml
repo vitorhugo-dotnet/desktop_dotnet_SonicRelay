@@ -1,0 +1,61 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:SonicRelay.Windows.Desktop.ViewModels"
+             x:Class="SonicRelay.Windows.Desktop.Controls.LoginView"
+             x:DataType="vm:AuthViewModel">
+  <Border Background="{DynamicResource Sonic.AppBackgroundBrush}">
+    <Border Classes="card" Width="380" MaxWidth="380"
+            VerticalAlignment="Center" HorizontalAlignment="Center">
+      <StackPanel Spacing="16">
+        <StackPanel Spacing="12" Orientation="Horizontal">
+          <Border Width="38" Height="38"
+                  CornerRadius="{StaticResource Sonic.RadiusMd}"
+                  Background="{DynamicResource Sonic.AccentBlueBrush}">
+            <TextBlock Text="VH" FontWeight="Bold" FontSize="{StaticResource Sonic.FontSizeTitle}"
+                       Foreground="{DynamicResource Sonic.TextPrimaryBrush}"
+                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <TextBlock Text="{Binding Title}" Classes="card-title"
+                     VerticalAlignment="Center" TextWrapping="Wrap" />
+        </StackPanel>
+
+        <StackPanel Spacing="6">
+          <TextBlock Text="Email" Classes="metric-label" />
+          <TextBox Text="{Binding Email}" Watermark="you@example.com"
+                   AutomationProperties.Name="Email" />
+        </StackPanel>
+
+        <StackPanel Spacing="6">
+          <TextBlock Text="Password" Classes="metric-label" />
+          <TextBox Text="{Binding Password}" PasswordChar="•"
+                   AutomationProperties.Name="Password" />
+        </StackPanel>
+
+        <StackPanel Spacing="6" IsVisible="{Binding IsRegisterMode}">
+          <TextBlock Text="Confirm password" Classes="metric-label" />
+          <TextBox Text="{Binding ConfirmPassword}" PasswordChar="•"
+                   AutomationProperties.Name="Confirm password" />
+        </StackPanel>
+
+        <TextBlock Text="{Binding ErrorMessage}"
+                   IsVisible="{Binding HasError}"
+                   Foreground="{DynamicResource Sonic.DangerBrush}"
+                   FontSize="{StaticResource Sonic.FontSizeLabel}"
+                   TextWrapping="Wrap" />
+
+        <Button Content="{Binding SubmitText}"
+                Command="{Binding SubmitCommand}"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Center"
+                IsEnabled="{Binding !IsBusy}" />
+
+        <Button Content="{Binding ToggleText}"
+                Command="{Binding ToggleModeCommand}"
+                Classes="ghost"
+                HorizontalAlignment="Center"
+                Background="Transparent"
+                BorderThickness="0" />
+      </StackPanel>
+    </Border>
+  </Border>
+</UserControl>

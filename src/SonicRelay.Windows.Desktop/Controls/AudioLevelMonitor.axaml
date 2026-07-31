@@ -1,0 +1,38 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="using:SonicRelay.Windows.Desktop.Controls"
+             x:Class="SonicRelay.Windows.Desktop.Controls.AudioLevelMonitor"
+             x:Name="Root">
+  <Border Classes="card">
+    <StackPanel Spacing="12">
+      <Grid ColumnDefinitions="*,Auto">
+        <StackPanel Spacing="2">
+          <TextBlock Classes="section-eyebrow" Text="AUDIO MONITOR" />
+          <TextBlock Classes="card-title" Text="System capture" />
+        </StackPanel>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+          <Ellipse Width="8" Height="8" VerticalAlignment="Center"
+                   Fill="{DynamicResource Sonic.AccentTealBrush}"
+                   IsVisible="{Binding IsActive, ElementName=Root}"
+                   AutomationProperties.Name="Audio capture active" />
+          <TextBlock Classes="mono"
+                     VerticalAlignment="Center"
+                     FontSize="{StaticResource Sonic.FontSizeTitle}"
+                     Foreground="{DynamicResource Sonic.AccentTealBrush}"
+                     Text="{Binding PeakText, ElementName=Root}"
+                     AutomationProperties.Name="Audio peak level in decibels" />
+        </StackPanel>
+      </Grid>
+
+      <controls:MetricProgressBar Height="14"
+                                  HorizontalAlignment="Stretch"
+                                  Value="{Binding Level, ElementName=Root}"
+                                  Fill="{DynamicResource Sonic.VisualizerGradientBrush}"
+                                  TrackBrush="{DynamicResource Sonic.MeterTrackBrush}"
+                                  AutomationProperties.Name="Captured audio peak level meter" />
+
+      <TextBlock Classes="metric-label"
+                 Text="Peak level of the captured system output" />
+    </StackPanel>
+  </Border>
+</UserControl>

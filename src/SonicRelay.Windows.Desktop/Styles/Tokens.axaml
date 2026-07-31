@@ -1,0 +1,127 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!--
+    Centralized SonicRelay design tokens for the Avalonia shell (issue #32, phase 2).
+    Ported from the locked WinUI palette (App/Styles/SonicPalette.xaml, issue #25) so the
+    new shell stays visually aligned with the existing publisher and the Lovable prototype.
+    Do NOT hard-code visual values in components — always reference a token from this file.
+    Dark theme is the default; a Light variant is provided so a future light theme (out of
+    scope this phase) can be enabled without touching components.
+  -->
+
+  <!-- ===== Spacing / radius / typography (theme-independent) ===== -->
+  <x:Double x:Key="Sonic.SpaceXs">4</x:Double>
+  <x:Double x:Key="Sonic.SpaceSm">8</x:Double>
+  <x:Double x:Key="Sonic.SpaceMd">16</x:Double>
+  <x:Double x:Key="Sonic.SpaceLg">24</x:Double>
+  <x:Double x:Key="Sonic.SpaceXl">32</x:Double>
+  <x:Double x:Key="Sonic.CardGap">16</x:Double>
+
+  <CornerRadius x:Key="Sonic.RadiusSm">8</CornerRadius>
+  <CornerRadius x:Key="Sonic.RadiusMd">12</CornerRadius>
+  <CornerRadius x:Key="Sonic.RadiusLg">16</CornerRadius>
+  <CornerRadius x:Key="Sonic.RadiusPill">999</CornerRadius>
+
+  <Thickness x:Key="Sonic.CardPadding">20</Thickness>
+
+  <x:Double x:Key="Sonic.FontSizeCaption">12</x:Double>
+  <x:Double x:Key="Sonic.FontSizeLabel">13</x:Double>
+  <x:Double x:Key="Sonic.FontSizeBody">14</x:Double>
+  <x:Double x:Key="Sonic.FontSizeTitle">16</x:Double>
+  <x:Double x:Key="Sonic.FontSizeMetric">20</x:Double>
+  <x:Double x:Key="Sonic.FontSizeHeadline">24</x:Double>
+
+  <FontFamily x:Key="Sonic.FontMono">Cascadia Code,Cascadia Mono,Consolas,Menlo,Monospace</FontFamily>
+
+  <!-- ===== Colors: dark (default) and light variants ===== -->
+  <ResourceDictionary.ThemeDictionaries>
+    <ResourceDictionary x:Key="Dark">
+      <!-- Base -->
+      <SolidColorBrush x:Key="Sonic.AppBackgroundBrush" Color="#070B14" />
+      <SolidColorBrush x:Key="Sonic.SidebarBackgroundBrush" Color="#0B101B" />
+      <SolidColorBrush x:Key="Sonic.CardBackgroundBrush" Color="#111827" />
+      <SolidColorBrush x:Key="Sonic.CardBackgroundElevatedBrush" Color="#131C2B" />
+      <SolidColorBrush x:Key="Sonic.CardBorderBrush" Color="#273449" />
+      <SolidColorBrush x:Key="Sonic.DividerBrush" Color="#1F2937" />
+
+      <!-- Text -->
+      <SolidColorBrush x:Key="Sonic.TextPrimaryBrush" Color="#F8FAFC" />
+      <SolidColorBrush x:Key="Sonic.TextSecondaryBrush" Color="#AAB4C3" />
+      <SolidColorBrush x:Key="Sonic.TextMutedBrush" Color="#7C8798" />
+      <SolidColorBrush x:Key="Sonic.TextDisabledBrush" Color="#4B5563" />
+
+      <!-- Brand / audio -->
+      <SolidColorBrush x:Key="Sonic.AccentTealBrush" Color="#4DEFD6" />
+      <SolidColorBrush x:Key="Sonic.AccentTealMutedBrush" Color="#2DD4BF" />
+      <SolidColorBrush x:Key="Sonic.AccentBlueBrush" Color="#2F5FA8" />
+      <SolidColorBrush x:Key="Sonic.AccentBlueDarkBrush" Color="#1E3A6D" />
+
+      <!-- Status: foreground -->
+      <SolidColorBrush x:Key="Sonic.SuccessBrush" Color="#4DEFD6" />
+      <SolidColorBrush x:Key="Sonic.WarningBrush" Color="#FBBF24" />
+      <SolidColorBrush x:Key="Sonic.DangerBrush" Color="#FF5C7A" />
+      <SolidColorBrush x:Key="Sonic.NeutralBrush" Color="#94A3B8" />
+
+      <!-- Status: badge backgrounds -->
+      <SolidColorBrush x:Key="Sonic.SuccessBackgroundBrush" Color="#123A37" />
+      <SolidColorBrush x:Key="Sonic.WarningBackgroundBrush" Color="#3A2E12" />
+      <SolidColorBrush x:Key="Sonic.DangerBackgroundBrush" Color="#2A1420" />
+      <SolidColorBrush x:Key="Sonic.NeutralBackgroundBrush" Color="#1E293B" />
+
+      <!-- Status: badge borders -->
+      <SolidColorBrush x:Key="Sonic.SuccessBorderBrush" Color="#2DD4BF" />
+      <SolidColorBrush x:Key="Sonic.WarningBorderBrush" Color="#F59E0B" />
+      <SolidColorBrush x:Key="Sonic.DangerBorderBrush" Color="#B94A61" />
+      <SolidColorBrush x:Key="Sonic.NeutralBorderBrush" Color="#475569" />
+
+      <!-- Audio visualizer vertical gradient (top blue -> bottom teal) -->
+      <LinearGradientBrush x:Key="Sonic.VisualizerGradientBrush" StartPoint="0%,0%" EndPoint="0%,100%">
+        <GradientStop Offset="0" Color="#2F5FA8" />
+        <GradientStop Offset="1" Color="#2DD4BF" />
+      </LinearGradientBrush>
+      <SolidColorBrush x:Key="Sonic.MeterTrackBrush" Color="#1E293B" />
+    </ResourceDictionary>
+
+    <ResourceDictionary x:Key="Light">
+      <!-- Prepared, not the shipping theme this phase; mirrors token names so a future
+           light theme needs no component changes. -->
+      <SolidColorBrush x:Key="Sonic.AppBackgroundBrush" Color="#F4F6FB" />
+      <SolidColorBrush x:Key="Sonic.SidebarBackgroundBrush" Color="#EAEEF6" />
+      <SolidColorBrush x:Key="Sonic.CardBackgroundBrush" Color="#FFFFFF" />
+      <SolidColorBrush x:Key="Sonic.CardBackgroundElevatedBrush" Color="#F1F5FB" />
+      <SolidColorBrush x:Key="Sonic.CardBorderBrush" Color="#D3DCEA" />
+      <SolidColorBrush x:Key="Sonic.DividerBrush" Color="#E2E8F0" />
+
+      <SolidColorBrush x:Key="Sonic.TextPrimaryBrush" Color="#0B1220" />
+      <SolidColorBrush x:Key="Sonic.TextSecondaryBrush" Color="#475569" />
+      <SolidColorBrush x:Key="Sonic.TextMutedBrush" Color="#64748B" />
+      <SolidColorBrush x:Key="Sonic.TextDisabledBrush" Color="#94A3B8" />
+
+      <SolidColorBrush x:Key="Sonic.AccentTealBrush" Color="#0D9488" />
+      <SolidColorBrush x:Key="Sonic.AccentTealMutedBrush" Color="#14B8A6" />
+      <SolidColorBrush x:Key="Sonic.AccentBlueBrush" Color="#2F5FA8" />
+      <SolidColorBrush x:Key="Sonic.AccentBlueDarkBrush" Color="#1E3A6D" />
+
+      <SolidColorBrush x:Key="Sonic.SuccessBrush" Color="#0D9488" />
+      <SolidColorBrush x:Key="Sonic.WarningBrush" Color="#B45309" />
+      <SolidColorBrush x:Key="Sonic.DangerBrush" Color="#BE123C" />
+      <SolidColorBrush x:Key="Sonic.NeutralBrush" Color="#475569" />
+
+      <SolidColorBrush x:Key="Sonic.SuccessBackgroundBrush" Color="#D9F5F0" />
+      <SolidColorBrush x:Key="Sonic.WarningBackgroundBrush" Color="#FBEBD0" />
+      <SolidColorBrush x:Key="Sonic.DangerBackgroundBrush" Color="#FBDDE4" />
+      <SolidColorBrush x:Key="Sonic.NeutralBackgroundBrush" Color="#E2E8F0" />
+
+      <SolidColorBrush x:Key="Sonic.SuccessBorderBrush" Color="#14B8A6" />
+      <SolidColorBrush x:Key="Sonic.WarningBorderBrush" Color="#F59E0B" />
+      <SolidColorBrush x:Key="Sonic.DangerBorderBrush" Color="#F43F5E" />
+      <SolidColorBrush x:Key="Sonic.NeutralBorderBrush" Color="#CBD5E1" />
+
+      <LinearGradientBrush x:Key="Sonic.VisualizerGradientBrush" StartPoint="0%,0%" EndPoint="0%,100%">
+        <GradientStop Offset="0" Color="#2F5FA8" />
+        <GradientStop Offset="1" Color="#14B8A6" />
+      </LinearGradientBrush>
+      <SolidColorBrush x:Key="Sonic.MeterTrackBrush" Color="#E2E8F0" />
+    </ResourceDictionary>
+  </ResourceDictionary.ThemeDictionaries>
+</ResourceDictionary>

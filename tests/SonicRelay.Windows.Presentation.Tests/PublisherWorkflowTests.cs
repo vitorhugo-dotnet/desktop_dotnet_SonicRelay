@@ -493,6 +493,8 @@ public sealed class PublisherWorkflowTests
         public string? SessionId { get; private set; }
         public bool CloseCalled { get; private set; }
         public event Action<SignalingConnectionState>? StateChanged;
+        public event Action<int>? ReconnectAttempting;
+        public event Action<SignalingCloseReason>? Closed;
         public Task ConnectAsync(string sessionId, CancellationToken cancellationToken = default)
         {
             SessionId = sessionId;

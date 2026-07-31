@@ -37,7 +37,7 @@
         Id="ApplicationStartMenuShortcut"
         Name="SonicRelay Windows Publisher"
         Description="Launch SonicRelay Windows Publisher"
-        Target="[INSTALLFOLDER]SonicRelay.Windows.App.exe"
+        Target="[INSTALLFOLDER]SonicRelay.Windows.Desktop.exe"
         WorkingDirectory="INSTALLFOLDER" />
       <RemoveFolder Id="RemoveApplicationProgramsFolder" On="uninstall" />
       <RegistryValue

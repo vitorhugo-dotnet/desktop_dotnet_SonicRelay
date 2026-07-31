@@ -51,8 +51,11 @@ public sealed record DashboardViewModel
         var (signalingText, signalingBadge) = SignalingStatus(snapshot.SignalingState);
         var (webRtcText, webRtcBadge) = WebRtcStatus(webrtc);
         var level = snapshot.AudioDiagnostics?.Level ?? AudioLevelSnapshot.Silence;
-        var selected = FirstConnected(webrtc)?.SelectedCandidatePair;
+        var connected = FirstConnected(webrtc);
+        var selected = connected?.SelectedCandidatePair;
         var rtt = FirstRoundTripTime(webrtc);
+        var reception = connected?.AudioReceive;
+        var send = connected?.AudioSend;
 
         return new DashboardViewModel
         {
@@ -69,11 +72,12 @@ public sealed record DashboardViewModel
             AudioPeak = level.Peak,
             AudioRms = level.Rms,
             LatencyText = rtt is { } value ? $"{value.TotalMilliseconds:F0} ms" : Unknown,
-            // Jitter/packet loss/bitrate are not yet plumbed from WebRTC getStats; shown
-            // as unknown until that follow-up lands (see docs/windows-publisher.md).
-            JitterText = Unknown,
-            PacketLossText = Unknown,
-            BitrateText = Unknown,
+            // Latency (RTT), jitter and packet loss all come from the connected viewer's RTCP
+            // reports (issue #32); each reads as unknown until the first report correlates.
+            // Bitrate is the negotiated Opus send bitrate.
+            JitterText = reception is { } r ? $"{r.Jitter.TotalMilliseconds:F0} ms" : Unknown,
+            PacketLossText = reception is { } r2 ? $"{r2.PacketLossPercent:F1} %" : Unknown,
+            BitrateText = send is { } s ? $"{s.OpusBitrateKbps} kbps" : Unknown,
         };
     }
 

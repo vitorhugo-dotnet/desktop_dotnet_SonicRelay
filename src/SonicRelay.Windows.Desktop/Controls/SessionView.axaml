@@ -1,0 +1,43 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="using:SonicRelay.Windows.Desktop.Controls"
+             xmlns:vm="using:SonicRelay.Windows.Desktop.ViewModels"
+             x:Class="SonicRelay.Windows.Desktop.Controls.SessionView"
+             x:DataType="vm:DashboardShellViewModel">
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+    <WrapPanel Orientation="Horizontal" Margin="16">
+      <controls:SessionCodeCard Width="440" Margin="8" />
+      <controls:InfrastructureStatusCard Width="360" Margin="8" />
+
+      <Border Classes="card" Width="360" Margin="8">
+        <StackPanel Spacing="12">
+          <TextBlock Classes="card-title" Text="Transmission" />
+          <Grid ColumnDefinitions="*,Auto">
+            <TextBlock Classes="metric-label" Text="State" VerticalAlignment="Center" />
+            <controls:ConnectionStatusBadge Grid.Column="1"
+                                            Text="{Binding GlobalStatusText}"
+                                            Badge="{Binding GlobalStatusBadge}" />
+          </Grid>
+          <Grid ColumnDefinitions="*,Auto">
+            <TextBlock Classes="metric-label" Text="Interface state" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1" Text="{Binding UiStateText}"
+                       Foreground="{DynamicResource Sonic.TextPrimaryBrush}"
+                       FontSize="{StaticResource Sonic.FontSizeBody}" FontWeight="SemiBold" />
+          </Grid>
+          <Grid ColumnDefinitions="*,Auto">
+            <TextBlock Classes="metric-label" Text="Mode" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1" Text="{Binding ConnectionModeText}"
+                       Foreground="{DynamicResource Sonic.TextPrimaryBrush}"
+                       FontSize="{StaticResource Sonic.FontSizeBody}" FontWeight="SemiBold" />
+          </Grid>
+          <Grid ColumnDefinitions="*,Auto">
+            <TextBlock Classes="metric-label" Text="Viewers" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1" Text="{Binding ViewerCountText}"
+                       Foreground="{DynamicResource Sonic.TextPrimaryBrush}"
+                       FontSize="{StaticResource Sonic.FontSizeBody}" FontWeight="SemiBold" />
+          </Grid>
+        </StackPanel>
+      </Border>
+    </WrapPanel>
+  </ScrollViewer>
+</UserControl>

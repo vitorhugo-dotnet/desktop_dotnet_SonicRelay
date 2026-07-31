@@ -166,4 +166,45 @@ public sealed class DashboardViewModelTests
         Assert.Equal(DashboardViewModel.Unknown, vm.PacketLossText);
         Assert.Equal(DashboardViewModel.Unknown, vm.BitrateText);
     }
+
+    [Fact]
+    public void Jitter_and_loss_come_from_the_connected_viewer_reception_report()
+    {
+        var diag = Viewers(new PeerConnectionDiagnostics(
+            "v1", PeerConnectionState.Connected, "host->host", TimeSpan.FromMilliseconds(20),
+            AudioReceive: new AudioReceptionDiagnostics(TimeSpan.FromMilliseconds(6), 1.5, 12)));
+
+        var vm = DashboardViewModel.From(Streaming, diag, forceRelay: false);
+
+        Assert.Equal("6 ms", vm.JitterText);
+        Assert.Equal("1.5 %", vm.PacketLossText);
+    }
+
+    [Fact]
+    public void Bitrate_comes_from_the_negotiated_opus_send_bitrate()
+    {
+        var diag = Viewers(new PeerConnectionDiagnostics(
+            "v1", PeerConnectionState.Connected, "host->host", TimeSpan.FromMilliseconds(20),
+            AudioSend: new AudioSendDiagnostics(0, 0, 0, 0, TimeSpan.Zero, 20, 96, 2, "music-96", true, 1)));
+
+        var vm = DashboardViewModel.From(Streaming, diag, forceRelay: false);
+
+        Assert.Equal("96 kbps", vm.BitrateText);
+    }
+
+    [Fact]
+    public void Reception_metrics_stay_unknown_until_a_report_arrives()
+    {
+        // Viewer connected but no RTCP receiver report yet: jitter/loss unknown, but the
+        // negotiated send bitrate is already a real value.
+        var diag = Viewers(new PeerConnectionDiagnostics(
+            "v1", PeerConnectionState.Connected, "host->host", null,
+            AudioSend: new AudioSendDiagnostics(0, 0, 0, 0, TimeSpan.Zero, 20, 64, 1, "voice-64", true, 1)));
+
+        var vm = DashboardViewModel.From(Streaming, diag, forceRelay: false);
+
+        Assert.Equal(DashboardViewModel.Unknown, vm.JitterText);
+        Assert.Equal(DashboardViewModel.Unknown, vm.PacketLossText);
+        Assert.Equal("64 kbps", vm.BitrateText);
+    }
 }

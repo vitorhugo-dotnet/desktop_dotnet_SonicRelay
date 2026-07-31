@@ -161,29 +161,11 @@ internal sealed class WasapiLoopbackBackend : IAudioCaptureBackend
                 var byteCount = checked((int)frameCount * format.BlockAlign);
                 var data = new byte[byteCount];
                 if ((flags & 0x2) == 0) Marshal.Copy(buffer, data, 0, byteCount);
-                var level = CalculateLevel(data, sampleFormat);
+                var level = AudioLevelCalculator.Calculate(data, sampleFormat);
                 FrameAvailable?.Invoke(new AudioFrame(data, (int)format.SamplesPerSec, format.Channels, sampleFormat, timestamp), level);
             }
             finally { CheckHResult(captureClient.ReleaseBuffer(frameCount), "WASAPI could not release an audio packet."); }
         }
-    }
-
-    private static AudioLevelSnapshot CalculateLevel(byte[] data, AudioSampleFormat format)
-    {
-        double sum = 0;
-        float peak = 0;
-        var count = format == AudioSampleFormat.IeeeFloat32 ? data.Length / 4 : data.Length / 2;
-        for (var i = 0; i < count; i++)
-        {
-            var sample = format == AudioSampleFormat.IeeeFloat32
-                ? Math.Clamp(BitConverter.ToSingle(data, i * 4), -1f, 1f)
-                : BitConverter.ToInt16(data, i * 2) / 32768f;
-            var absolute = Math.Abs(sample);
-            peak = Math.Max(peak, absolute);
-            sum += sample * sample;
-        }
-        var rms = count == 0 ? 0 : (float)Math.Sqrt(sum / count);
-        return new AudioLevelSnapshot(Math.Clamp(peak, 0, 1), Math.Clamp(rms, 0, 1));
     }
 
     private static AudioSampleFormat ResolveFormat(IntPtr pointer, WaveFormatEx format)

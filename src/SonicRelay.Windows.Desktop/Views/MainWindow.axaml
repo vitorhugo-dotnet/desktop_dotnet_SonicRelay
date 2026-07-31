@@ -1,0 +1,118 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:SonicRelay.Windows.Desktop.Controls"
+        xmlns:vm="using:SonicRelay.Windows.Desktop.ViewModels"
+        x:Class="SonicRelay.Windows.Desktop.Views.MainWindow"
+        x:Name="RootWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="SonicRelay Publisher"
+        Width="1200" Height="820"
+        MinWidth="880" MinHeight="620"
+        Background="{DynamicResource Sonic.AppBackgroundBrush}">
+
+  <Panel>
+    <!-- Sign-in surface, shown until an authenticated session exists. DataContext is the
+         AuthViewModel, so ShowLogin is read from the window's root view model explicitly. -->
+    <controls:LoginView DataContext="{Binding Auth}"
+                        IsVisible="{Binding ((vm:MainWindowViewModel)DataContext).ShowLogin, ElementName=RootWindow}" />
+
+    <Grid ColumnDefinitions="Auto,*" IsVisible="{Binding !ShowLogin}">
+    <!-- Left navigation rail -->
+    <controls:SidebarNavigation Grid.Column="0" Width="232" />
+
+    <!-- Main area -->
+    <DockPanel Grid.Column="1" LastChildFill="True">
+
+      <!-- Top bar (shared across pages) -->
+      <Border DockPanel.Dock="Top"
+              Background="{DynamicResource Sonic.SidebarBackgroundBrush}"
+              BorderBrush="{DynamicResource Sonic.CardBorderBrush}"
+              BorderThickness="0,0,0,1"
+              Padding="24,16">
+        <Grid ColumnDefinitions="*,Auto">
+          <StackPanel Spacing="2" VerticalAlignment="Center">
+            <TextBlock Text="{Binding PageTitle}" FontSize="{StaticResource Sonic.FontSizeHeadline}"
+                       FontWeight="SemiBold"
+                       Foreground="{DynamicResource Sonic.TextPrimaryBrush}" />
+            <TextBlock Text="{Binding PageSubtitle}" Classes="metric-label" />
+          </StackPanel>
+          <controls:AccountStatusHeader Grid.Column="1"
+                                        DataContext="{Binding Shell}"
+                                        SignOutCommand="{Binding DataContext.LogoutCommand, ElementName=RootWindow}" />
+        </Grid>
+      </Border>
+
+      <!-- Page content, swapped by the sidebar selection -->
+      <Panel>
+        <!-- Dashboard -->
+        <DockPanel IsVisible="{Binding IsDashboard}" LastChildFill="True">
+          <controls:TechnicalConsole DockPanel.Dock="Bottom"
+                                     Margin="24,0,24,20"
+                                     DataContext="{Binding Shell}" />
+          <Border DockPanel.Dock="Top" Padding="24,16,24,0">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <Button Content="Create session" Command="{Binding CreateSessionCommand}" />
+              <Button Content="Start audio" Command="{Binding StartAudioCommand}" />
+              <Button Content="Stop audio" Command="{Binding StopAudioCommand}" />
+              <Button Content="End session" Command="{Binding EndSessionCommand}" />
+              <Button Content="Retry" Command="{Binding RetryCommand}" />
+            </StackPanel>
+          </Border>
+          <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+            <WrapPanel Orientation="Horizontal" Margin="16,16,16,0">
+              <controls:SessionCodeCard Width="440" Margin="8" DataContext="{Binding Shell}" />
+              <controls:AudioLevelMonitor Width="440" Margin="8"
+                                          Level="{Binding Shell.AudioLevelFraction}"
+                                          PeakText="{Binding Shell.AudioPeakDbText}"
+                                          IsActive="{Binding Shell.IsCapturing}" />
+              <controls:InfrastructureStatusCard Width="360" Margin="8" DataContext="{Binding Shell}" />
+              <Border Classes="card" Width="360" Margin="8">
+                <StackPanel Spacing="14">
+                  <TextBlock Classes="card-title" Text="Stream Quality" />
+                  <Grid ColumnDefinitions="*,*,*" ColumnSpacing="10">
+                    <Border Grid.Column="0" Classes="card-elevated">
+                      <StackPanel Spacing="4">
+                        <TextBlock Classes="metric-label" Text="Latency" />
+                        <TextBlock Classes="mono metric-value" Text="{Binding Shell.LatencyText}" />
+                      </StackPanel>
+                    </Border>
+                    <Border Grid.Column="1" Classes="card-elevated">
+                      <StackPanel Spacing="4">
+                        <TextBlock Classes="metric-label" Text="Jitter" />
+                        <TextBlock Classes="mono metric-value" Text="{Binding Shell.JitterText}" />
+                      </StackPanel>
+                    </Border>
+                    <Border Grid.Column="2" Classes="card-elevated">
+                      <StackPanel Spacing="4">
+                        <TextBlock Classes="metric-label" Text="Loss" />
+                        <TextBlock Classes="mono metric-value" Text="{Binding Shell.PacketLossText}" />
+                      </StackPanel>
+                    </Border>
+                  </Grid>
+                </StackPanel>
+              </Border>
+              <controls:BandwidthGauge Width="360" Margin="8" DataContext="{Binding Shell}" />
+            </WrapPanel>
+          </ScrollViewer>
+        </DockPanel>
+
+        <!-- Session (DataContext is the shell VM, so IsSession is read from the root VM) -->
+        <controls:SessionView DataContext="{Binding Shell}"
+                              IsVisible="{Binding ((vm:MainWindowViewModel)DataContext).IsSession, ElementName=RootWindow}" />
+
+        <!-- Diagnostics -->
+        <controls:DiagnosticsView
+            IsVisible="{Binding ((vm:MainWindowViewModel)DataContext).IsDiagnostics, ElementName=RootWindow}" />
+
+        <!-- Audio -->
+        <controls:AudioView DataContext="{Binding Audio}"
+                            IsVisible="{Binding ((vm:MainWindowViewModel)DataContext).IsAudio, ElementName=RootWindow}" />
+
+        <!-- Settings -->
+        <controls:SettingsView DataContext="{Binding Settings}"
+                               IsVisible="{Binding ((vm:MainWindowViewModel)DataContext).IsSettings, ElementName=RootWindow}" />
+      </Panel>
+    </DockPanel>
+    </Grid>
+  </Panel>
+</Window>

@@ -1,0 +1,29 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:SonicRelay.Windows.Desktop.ViewModels"
+             x:Class="SonicRelay.Windows.Desktop.Controls.SessionCodeCard"
+             x:DataType="vm:DashboardShellViewModel">
+  <Border Classes="card">
+    <StackPanel Spacing="12">
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock Classes="section-eyebrow" Text="BROADCAST SESSION" VerticalAlignment="Center" />
+        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+          <Button Classes="ghost" Content="Copy"
+                  IsEnabled="{Binding HasSessionCode}"
+                  Click="OnCopyClick"
+                  ToolTip.Tip="Copy the session code" />
+        </StackPanel>
+      </Grid>
+
+      <TextBlock Classes="mono"
+                 Text="{Binding SessionCodeText}"
+                 FontSize="40"
+                 FontWeight="Bold"
+                 Foreground="{DynamicResource Sonic.AccentTealBrush}"
+                 TextWrapping="NoWrap" />
+
+      <TextBlock Classes="metric-label"
+                 Text="Share this code with a viewer to start the broadcast." />
+    </StackPanel>
+  </Border>
+</UserControl>

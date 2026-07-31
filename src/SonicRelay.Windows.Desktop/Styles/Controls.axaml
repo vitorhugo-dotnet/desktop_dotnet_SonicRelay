@@ -1,0 +1,70 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!--
+    Shared style classes for the SonicRelay Avalonia shell (issue #32, phase 2). These
+    compose the design tokens (Styles/Tokens.axaml) into the handful of recurring visual
+    roles the prototype uses: cards, titles, labels, metric values, and monospace
+    technical text. Components apply a class ("card", "metric-label", …) rather than
+    repeating brush/size setters.
+  -->
+
+  <!-- Card container -->
+  <Style Selector="Border.card">
+    <Setter Property="Background" Value="{DynamicResource Sonic.CardBackgroundBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Sonic.CardBorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{StaticResource Sonic.RadiusLg}" />
+    <Setter Property="Padding" Value="{StaticResource Sonic.CardPadding}" />
+  </Style>
+
+  <Style Selector="Border.card-elevated">
+    <Setter Property="Background" Value="{DynamicResource Sonic.CardBackgroundElevatedBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Sonic.CardBorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{StaticResource Sonic.RadiusMd}" />
+    <Setter Property="Padding" Value="16,12" />
+  </Style>
+
+  <!-- Text roles -->
+  <Style Selector="TextBlock.card-title">
+    <Setter Property="Foreground" Value="{DynamicResource Sonic.TextPrimaryBrush}" />
+    <Setter Property="FontSize" Value="{StaticResource Sonic.FontSizeTitle}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+
+  <Style Selector="TextBlock.section-eyebrow">
+    <Setter Property="Foreground" Value="{DynamicResource Sonic.TextMutedBrush}" />
+    <Setter Property="FontSize" Value="{StaticResource Sonic.FontSizeCaption}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="LetterSpacing" Value="1.2" />
+  </Style>
+
+  <Style Selector="TextBlock.metric-label">
+    <Setter Property="Foreground" Value="{DynamicResource Sonic.TextSecondaryBrush}" />
+    <Setter Property="FontSize" Value="{StaticResource Sonic.FontSizeLabel}" />
+  </Style>
+
+  <Style Selector="TextBlock.metric-value">
+    <Setter Property="Foreground" Value="{DynamicResource Sonic.TextPrimaryBrush}" />
+    <Setter Property="FontSize" Value="{StaticResource Sonic.FontSizeMetric}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+
+  <Style Selector="TextBlock.mono">
+    <Setter Property="FontFamily" Value="{StaticResource Sonic.FontMono}" />
+  </Style>
+
+  <!-- Icon-style buttons used on cards (copy / share) stay flat and quiet. -->
+  <Style Selector="Button.ghost">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Sonic.CardBorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{StaticResource Sonic.RadiusSm}" />
+    <Setter Property="Foreground" Value="{DynamicResource Sonic.TextSecondaryBrush}" />
+    <Setter Property="Padding" Value="10,6" />
+  </Style>
+  <Style Selector="Button.ghost:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource Sonic.CardBackgroundElevatedBrush}" />
+    <Setter Property="TextElement.Foreground" Value="{DynamicResource Sonic.TextPrimaryBrush}" />
+  </Style>
+</Styles>

@@ -10,6 +10,20 @@ public static class SignalingMessageTypes
     public const string SessionJoined = "session.joined";
     public const string SessionLeft = "session.left";
     public const string SessionEnded = "session.ended";
+
+    /// <summary>
+    /// A participant's socket dropped but the backend's reconnect grace period has not
+    /// elapsed yet (transient — do not tear down the peer connection for it).
+    /// </summary>
+    public const string ParticipantDisconnected = "participant.disconnected";
+
+    /// <summary>
+    /// A participant reconnected within the backend's grace period, reusing the same
+    /// participant id. Renegotiate (ICE restart) any existing peer connection for it
+    /// instead of waiting indefinitely for its ICE to recover on its own.
+    /// </summary>
+    public const string ParticipantReconnected = "participant.reconnected";
+
     public const string Ping = "ping";
     public const string Pong = "pong";
     public const string Error = "error";
@@ -24,6 +38,8 @@ public static class SignalingMessageTypes
         SessionJoined,
         SessionLeft,
         SessionEnded,
+        ParticipantDisconnected,
+        ParticipantReconnected,
         Ping,
         Pong,
         Error

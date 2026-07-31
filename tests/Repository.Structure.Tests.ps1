@@ -9,7 +9,7 @@ $requiredPaths = @(
     '.gitignore'
     '.github/workflows/ci.yml'
     '.github/workflows/release.yml'
-    'src/SonicRelay.Windows.App/SonicRelay.Windows.App.csproj'
+    'src/SonicRelay.Windows.Desktop/SonicRelay.Windows.Desktop.csproj'
     'src/SonicRelay.Windows.Core/SonicRelay.Windows.Core.csproj'
     'src/SonicRelay.Windows.ApiClient/SonicRelay.Windows.ApiClient.csproj'
     'src/SonicRelay.Windows.Signaling/SonicRelay.Windows.Signaling.csproj'
@@ -21,6 +21,15 @@ $requiredPaths = @(
     'docs/architecture.md'
     'docs/non-admin-checklist.md'
     'docs/release-smoke-test.md'
+    'docs/linux-publisher.md'
+    'src/SonicRelay.Platform.Linux/SonicRelay.Platform.Linux.csproj'
+    'packaging/linux/build-packages.sh'
+    'packaging/linux/sonicrelay'
+    'packaging/linux/sonicrelay.desktop'
+    'packaging/linux/after-install.sh'
+    'packaging/linux/after-remove.sh'
+    'packaging/linux/icons/sonicrelay.svg'
+    'packaging/linux/icons/sonicrelay.png'
 )
 
 $missingPaths = $requiredPaths | Where-Object {
@@ -65,23 +74,33 @@ if ($readme -notmatch '\(docs/release-smoke-test\.md\)') {
     Write-Error 'README.md must link to docs/release-smoke-test.md.'
 }
 
+if ($readme -notmatch '\(docs/linux-publisher\.md\)') {
+    Write-Error 'README.md must link to docs/linux-publisher.md.'
+}
+
+# The WPF/WinUI SonicRelay.Windows.App project (and its PairingCard control) was
+# replaced by the cross-platform Avalonia shell in SonicRelay.Windows.Desktop
+# (issue #32) in the same window as the device-identity migration (issue #26).
+# The identity/device-composition checks below were rewritten against the
+# surviving composition roots. NOTE: the manual pairing surface (challenge ID,
+# QR code, copy buttons) that PairingCard used to provide has not been ported to
+# the Avalonia shell yet — App.axaml.cs still drives the pre-migration sign-in
+# view. That gap is tracked separately; this script only guards the non-UI
+# composition (no reachable human-Identity code path, and the device-identity
+# types actually wired in).
 $runtimeSource = Get-Content -Raw -LiteralPath (Join-Path $root 'src/SonicRelay.Windows.Presentation/PublisherRuntime.cs')
-$appSource = Get-Content -Raw -LiteralPath (Join-Path $root 'src/SonicRelay.Windows.App/App.xaml.cs')
-$connectionPage = Get-Content -Raw -LiteralPath (Join-Path $root 'src/SonicRelay.Windows.App/Pages/ConnectionPage.xaml')
-$connectionPageCode = Get-Content -Raw -LiteralPath (Join-Path $root 'src/SonicRelay.Windows.App/Pages/ConnectionPage.xaml.cs')
-$pairingCard = Get-Content -Raw -LiteralPath (Join-Path $root 'src/SonicRelay.Windows.App/Controls/PairingCard.xaml')
-$pairingCardCode = Get-Content -Raw -LiteralPath (Join-Path $root 'src/SonicRelay.Windows.App/Controls/PairingCard.xaml.cs')
+$appSource = Get-Content -Raw -LiteralPath (Join-Path $root 'src/SonicRelay.Windows.Desktop/App.axaml.cs')
+$desktopRuntimeFactory = Get-Content -Raw -LiteralPath (Join-Path $root 'src/SonicRelay.Windows.Desktop/DesktopRuntimeFactory.cs')
 $forbiddenProductionIdentity = @(
     'new AuthApiClient('
     'new DeviceApiClient('
     'new UserScopedTokenStore('
-    'RestoreSessionAsync('
     '/auth/login'
     '/auth/register'
     '/auth/me'
     '/auth/refresh'
 )
-$activeComposition = $runtimeSource + "`n" + $appSource + "`n" + $connectionPage + "`n" + $connectionPageCode
+$activeComposition = $runtimeSource + "`n" + $appSource + "`n" + $desktopRuntimeFactory
 $reachableIdentity = $forbiddenProductionIdentity | Where-Object {
     $activeComposition.IndexOf($_, [StringComparison]::Ordinal) -ge 0
 }
@@ -101,30 +120,6 @@ $missingDeviceComposition = $requiredDeviceComposition | Where-Object {
 }
 if ($missingDeviceComposition.Count -gt 0) {
     Write-Error "Missing device-identity production composition:`n$($missingDeviceComposition -join "`n")"
-}
-
-$requiredManualPairingSurface = @(
-    'Pairing challenge ID'
-    'Copy challenge ID'
-    'Copy pairing code'
-    'Session join code'
-)
-$missingManualPairingSurface = $requiredManualPairingSurface | Where-Object {
-    $pairingCard.IndexOf($_, [StringComparison]::Ordinal) -lt 0
-}
-if ($missingManualPairingSurface.Count -gt 0) {
-    Write-Error "Missing manual pairing surface:`n$($missingManualPairingSurface -join "`n")"
-}
-
-$requiredPairingLifecyclePatterns = @(
-    '(?s)private void OnLoaded\(.*?viewModel\.StateChanged -= OnStateChanged;.*?ClearExpiredChallenge\(DateTimeOffset\.UtcNow\).*?viewModel\.StateChanged \+= OnStateChanged;'
-    '(?s)private void OnUnloaded\(.*?viewModel\.StateChanged -= OnStateChanged;'
-)
-$missingPairingLifecycle = $requiredPairingLifecyclePatterns | Where-Object {
-    $pairingCardCode -notmatch $_
-}
-if ($missingPairingLifecycle.Count -gt 0) {
-    Write-Error 'PairingCard must clear expired challenges and manage StateChanged across load/unload.'
 }
 
 $releaseSmokeTestPath = Join-Path $root 'docs/release-smoke-test.md'
@@ -220,6 +215,9 @@ if (Test-Path -LiteralPath $workflowPath) {
         'repository structure test' = 'tests/Repository\.Structure\.Tests\.ps1'
         'artifact upload' = 'actions/upload-artifact@v4'
         'always upload results' = 'if:\s*always\(\)'
+        'Ubuntu matrix leg' = 'ubuntu-24\.04'
+        'build-and-test matrix' = '(?m)^\s*matrix:\s*$'
+        'Linux startup smoke test' = 'xvfb-run'
     }
 
     $missingWorkflowRequirements = $requiredWorkflowPatterns.GetEnumerator() | Where-Object {
@@ -243,12 +241,19 @@ if (Test-Path -LiteralPath $releaseWorkflowPath) {
         'Release build' = 'dotnet build SonicRelay\.Windows\.slnx --configuration Release --no-restore'
         'repository structure test' = 'tests/Repository\.Structure\.Tests\.ps1'
         'solution tests' = 'dotnet test SonicRelay\.Windows\.slnx --configuration Release --no-build --no-restore'
-        'Windows x64 publish' = '(?s)dotnet publish src/SonicRelay\.Windows\.App/SonicRelay\.Windows\.App\.csproj.*?--runtime win-x64'
+        'runtime-specific publish restore' = '(?s)dotnet restore src/SonicRelay\.Windows\.Desktop/SonicRelay\.Windows\.Desktop\.csproj.*?--runtime win-x64'
+        'Windows x64 publish' = '(?s)dotnet publish src/SonicRelay\.Windows\.Desktop/SonicRelay\.Windows\.Desktop\.csproj.*?--runtime win-x64'
         'self-contained publish' = '--self-contained true'
         'portable archive name' = 'SonicRelay\.WindowsPublisher-win-x64-\$version\.zip'
         'build metadata' = 'BUILD-INFO\.txt'
         'release creation' = 'gh release create'
         'generated release notes' = '--generate-notes'
+        'Linux packaging job' = '(?m)^\s*linux-package:\s*$'
+        'Ubuntu runner for Linux packaging' = 'runs-on:\s*ubuntu-24\.04'
+        'Linux x64 publish' = '(?s)dotnet publish src/SonicRelay\.Windows\.Desktop/SonicRelay\.Windows\.Desktop\.csproj.*?--runtime linux-x64'
+        'Linux package build script' = 'packaging/linux/build-packages\.sh'
+        'fpm packaging tool' = 'gem install --no-document fpm'
+        'checksums extended for Linux' = 'checksums-sha256\.txt'
     }
 
     $missingReleaseWorkflowRequirements = $requiredReleaseWorkflowPatterns.GetEnumerator() | Where-Object {

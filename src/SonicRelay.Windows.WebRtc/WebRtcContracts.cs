@@ -98,12 +98,40 @@ public sealed record AudioSendDiagnostics(
     bool InbandFecEnabled,
     int ExpectedPacketLossPercent);
 
+/// <summary>
+/// Receiver-side quality for one peer, taken from the viewer's RTCP receiver reports about
+/// our outgoing audio stream (issue #32's "real metrics"). Jitter is the interarrival jitter
+/// the viewer measured; <see cref="PacketLossPercent"/> is the loss fraction of the most
+/// recent report interval; <see cref="CumulativePacketsLost"/> is the running total. Contains
+/// no addresses or SDP — only quality counters.
+/// </summary>
+public sealed record AudioReceptionDiagnostics(
+    TimeSpan Jitter,
+    double PacketLossPercent,
+    long CumulativePacketsLost)
+{
+    /// <summary>
+    /// Projects a raw RTCP reception report sample into UI-friendly units: RTP jitter units
+    /// on the given clock become a duration, and the 8-bit fraction-lost becomes a percentage.
+    /// </summary>
+    public static AudioReceptionDiagnostics FromReport(uint jitterRtpUnits, byte fractionLost, int cumulativePacketsLost, int clockRateHz)
+    {
+        var clock = clockRateHz > 0 ? clockRateHz : 48000;
+        return new AudioReceptionDiagnostics(
+            Jitter: TimeSpan.FromSeconds((double)jitterRtpUnits / clock),
+            // RTCP fraction lost is the loss count scaled to an 8-bit fixed point (0..255).
+            PacketLossPercent: fractionLost / 256d * 100d,
+            CumulativePacketsLost: cumulativePacketsLost);
+    }
+}
+
 public sealed record PeerConnectionDiagnostics(
     string ViewerId,
     PeerConnectionState State,
     string? SelectedCandidatePair = null,
     TimeSpan? EstimatedRoundTripTime = null,
-    AudioSendDiagnostics? AudioSend = null);
+    AudioSendDiagnostics? AudioSend = null,
+    AudioReceptionDiagnostics? AudioReceive = null);
 
 public sealed record WebRtcPublisherDiagnostics(
     int ViewerConnectionCount,
@@ -121,6 +149,15 @@ public interface IWebRtcPeerConnection : IAsyncDisposable
     event Func<WebRtcIceCandidate, CancellationToken, Task>? LocalIceCandidateReady;
     event Action? DiagnosticsChanged;
     Task<WebRtcSessionDescription> CreateOfferAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Restarts ICE on this peer connection and produces a fresh offer carrying the new ICE
+    /// credentials, without discarding the connection or its negotiated audio track. Used to
+    /// recover a peer whose viewer reconnected (or whose ICE degraded) rather than tearing
+    /// down and rebuilding the whole connection.
+    /// </summary>
+    Task<WebRtcSessionDescription> CreateIceRestartOfferAsync(CancellationToken cancellationToken = default);
+
     Task ApplyAnswerAsync(WebRtcSessionDescription answer, CancellationToken cancellationToken = default);
     Task AddRemoteIceCandidateAsync(WebRtcIceCandidate candidate, CancellationToken cancellationToken = default);
     Task SendAudioFrameAsync(WebRtcAudioFrame frame, CancellationToken cancellationToken = default);
@@ -140,6 +177,13 @@ public interface IPeerConnectionManager : IAsyncDisposable
     event Func<string, WebRtcIceCandidate, CancellationToken, Task>? LocalIceCandidateReady;
     event Action? DiagnosticsChanged;
     Task<ViewerPeerRegistration> RegisterViewerAsync(string viewerId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Requests an ICE-restart offer from the existing peer connection for <paramref name="viewerId"/>,
+    /// or returns <c>null</c> if no peer is registered for it yet.
+    /// </summary>
+    Task<WebRtcSessionDescription?> RequestIceRestartAsync(string viewerId, CancellationToken cancellationToken = default);
+
     Task ApplyAnswerAsync(string viewerId, WebRtcSessionDescription answer, CancellationToken cancellationToken = default);
     Task AddRemoteIceCandidateAsync(string viewerId, WebRtcIceCandidate candidate, CancellationToken cancellationToken = default);
     Task PushAudioFrameAsync(WebRtcAudioFrame frame, CancellationToken cancellationToken = default);
@@ -152,6 +196,7 @@ public interface IWebRtcPublisher : ISignalingMessageHandler, IAsyncDisposable
 {
     WebRtcPublisherDiagnostics Diagnostics { get; }
     event Action<WebRtcPublisherDiagnostics>? DiagnosticsChanged;
+    event Action<string>? IceRestartRequested;
     Task PushAudioFrameAsync(WebRtcAudioFrame frame, CancellationToken cancellationToken = default);
 }
 

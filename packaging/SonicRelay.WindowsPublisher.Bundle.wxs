@@ -2,7 +2,7 @@
      xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
   <!--
     User-scope setup wrapper (issue #19). The release .exe must be an installer, not the
-    raw WinUI app binary. This Burn bundle chains the per-user MSI so double-clicking the
+    raw Avalonia app binary. This Burn bundle chains the per-user MSI so double-clicking the
     .exe runs setup and installs into %LOCALAPPDATA%\SonicRelay\WindowsPublisher with no
     elevation, no Program Files write, no service, no driver and no firewall rule.
 

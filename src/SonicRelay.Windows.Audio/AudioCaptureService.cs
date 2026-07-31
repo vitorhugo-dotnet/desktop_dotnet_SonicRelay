@@ -76,6 +76,18 @@ public sealed class AudioCaptureService : IAudioCaptureService
         _backend.Faulted += OnBackendFaulted;
     }
 
+    /// <summary>
+    /// Platform-neutral composition entry point (issue #32): any platform shell
+    /// supplies its own <see cref="IAudioCaptureBackend"/> (WASAPI on Windows,
+    /// PipeWire on Linux) and device probe, and gets the same lifecycle,
+    /// recovery, and diagnostics behavior either way.
+    /// </summary>
+    public static AudioCaptureService Create(
+        IAudioCaptureBackend backend,
+        IAudioOutputDeviceProbe deviceProbe,
+        AudioRecoveryPolicy? recoveryPolicy = null) =>
+        new(backend, recoveryPolicy: recoveryPolicy, deviceProbe: deviceProbe);
+
     private static bool IsRetryable(AudioCaptureError error) =>
         error is AudioCaptureError.DeviceLost or AudioCaptureError.NoDevice;
 
@@ -112,7 +124,7 @@ public sealed class AudioCaptureService : IAudioCaptureService
             }
             catch (Exception error) when (error is not OperationCanceledException)
             {
-                SetFailure(new AudioCaptureException(AudioCaptureError.PlatformFailure, "Windows audio capture could not be started.", error));
+                SetFailure(new AudioCaptureException(AudioCaptureError.PlatformFailure, "Audio capture could not be started.", error));
             }
         }
         finally { _lifecycle.Release(); }
@@ -189,7 +201,13 @@ public sealed class AudioCaptureService : IAudioCaptureService
 
     private void OnFrameAvailable(AudioFrame frame, AudioLevelSnapshot level)
     {
-        if (State != AudioCaptureState.Capturing) return;
+        // A backend's first frame after a (re)start can legitimately arrive
+        // before the service's own state transition to Capturing catches up
+        // (PipeWireProcessBackend deliberately raises FrameAvailable for its
+        // first frame before its own StartAsync returns), so Starting and
+        // Recovering must also accept frames or that first ~20ms is silently
+        // dropped on every cold start and every recovery cycle.
+        if (State is not (AudioCaptureState.Capturing or AudioCaptureState.Starting or AudioCaptureState.Recovering)) return;
         _diagnostics = _diagnostics with
         {
             Level = level,
@@ -265,7 +283,7 @@ public sealed class AudioCaptureService : IAudioCaptureService
             }
             catch (Exception unexpected)
             {
-                SetFailure(new AudioCaptureException(AudioCaptureError.PlatformFailure, "Windows audio recovery failed.", unexpected));
+                SetFailure(new AudioCaptureException(AudioCaptureError.PlatformFailure, "Audio recovery failed.", unexpected));
                 return;
             }
             finally

@@ -1,0 +1,19 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="using:SonicRelay.Windows.Desktop.Controls"
+             xmlns:vm="using:SonicRelay.Windows.Desktop.ViewModels"
+             x:Class="SonicRelay.Windows.Desktop.Controls.DiagnosticsView"
+             x:DataType="vm:MainWindowViewModel">
+  <DockPanel LastChildFill="True">
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="24,24,24,0" HorizontalAlignment="Right">
+      <Button Content="Export logs" Command="{Binding ExportDiagnosticsCommand}" />
+      <Button Command="{Binding ClearDiagnosticsCommand}">
+        <TextBlock Text="{Binding ClearLogsArmed, Converter={x:Static controls:ClearLogsLabelConverter.Instance}}" />
+      </Button>
+    </StackPanel>
+    <TextBlock DockPanel.Dock="Top" Margin="24,4,24,0" Classes="mono"
+               IsVisible="{Binding HasDiagnosticsActionMessage}"
+               Text="{Binding DiagnosticsActionMessage}" />
+    <controls:TechnicalConsole Margin="24" DataContext="{Binding Shell}" />
+  </DockPanel>
+</UserControl>

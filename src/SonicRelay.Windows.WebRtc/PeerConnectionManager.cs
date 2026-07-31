@@ -68,6 +68,24 @@ public sealed class PeerConnectionManager : IPeerConnectionManager
         CancellationToken cancellationToken = default) =>
         GetPeer(viewerId).ApplyAnswerAsync(answer ?? throw new ArgumentNullException(nameof(answer)), cancellationToken);
 
+    public Task<WebRtcSessionDescription?> RequestIceRestartAsync(
+        string viewerId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(viewerId);
+        IWebRtcPeerConnection? connection;
+        lock (peers)
+        {
+            connection = peers.TryGetValue(viewerId, out var peer) ? peer.PublicPeer.Connection : null;
+        }
+        return connection is null
+            ? Task.FromResult<WebRtcSessionDescription?>(null)
+            : RestartAsync(connection, cancellationToken);
+
+        static async Task<WebRtcSessionDescription?> RestartAsync(IWebRtcPeerConnection target, CancellationToken ct) =>
+            await target.CreateIceRestartOfferAsync(ct);
+    }
+
     public Task AddRemoteIceCandidateAsync(
         string viewerId,
         WebRtcIceCandidate candidate,

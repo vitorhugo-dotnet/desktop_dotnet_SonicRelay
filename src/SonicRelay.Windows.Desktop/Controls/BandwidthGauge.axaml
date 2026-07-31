@@ -1,0 +1,29 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="using:SonicRelay.Windows.Desktop.Controls"
+             xmlns:vm="using:SonicRelay.Windows.Desktop.ViewModels"
+             x:Class="SonicRelay.Windows.Desktop.Controls.BandwidthGauge"
+             x:DataType="vm:DashboardShellViewModel">
+  <Border Classes="card">
+    <StackPanel Spacing="12">
+      <TextBlock Classes="card-title" Text="Bandwidth" />
+
+      <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Bottom">
+        <TextBlock Classes="mono metric-value"
+                   FontSize="{StaticResource Sonic.FontSizeHeadline}"
+                   Text="{Binding BitrateText}" />
+        <TextBlock Classes="metric-label" VerticalAlignment="Bottom" Margin="0,0,0,4"
+                   Text="{Binding CodecText}" />
+      </StackPanel>
+
+      <controls:MetricProgressBar Height="8"
+                                  HorizontalAlignment="Stretch"
+                                  Value="0"
+                                  Fill="{DynamicResource Sonic.AccentBlueBrush}"
+                                  TrackBrush="{DynamicResource Sonic.MeterTrackBrush}"
+                                  AutomationProperties.Name="Outgoing bitrate level" />
+
+      <TextBlock Classes="metric-label" Text="{Binding BandwidthProfileText}" />
+    </StackPanel>
+  </Border>
+</UserControl>

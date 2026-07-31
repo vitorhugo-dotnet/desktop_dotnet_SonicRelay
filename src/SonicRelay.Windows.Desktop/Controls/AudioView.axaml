@@ -1,0 +1,33 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:SonicRelay.Windows.Desktop.ViewModels"
+             xmlns:audio="using:SonicRelay.Windows.Audio"
+             x:Class="SonicRelay.Windows.Desktop.Controls.AudioView"
+             x:DataType="vm:AudioPageViewModel">
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+    <StackPanel Margin="24" Spacing="16" MaxWidth="620" HorizontalAlignment="Left">
+
+      <TextBlock Classes="metric-label"
+                 IsVisible="{Binding !IsConnected}"
+                 Text="Sign in to a backend to choose the audio output." />
+
+      <Border Classes="card" IsVisible="{Binding IsConnected}">
+        <StackPanel Spacing="12">
+          <TextBlock Classes="card-title" Text="Capture source" />
+          <TextBlock Classes="metric-label" Text="Which system output endpoint to capture; applies to the next capture start." />
+          <ComboBox ItemsSource="{Binding Devices}"
+                    SelectedItem="{Binding SelectedDevice}"
+                    HorizontalAlignment="Stretch"
+                    AutomationProperties.Name="Audio output device">
+            <ComboBox.ItemTemplate>
+              <DataTemplate x:DataType="audio:AudioOutputDevice">
+                <TextBlock Text="{Binding Name}" />
+              </DataTemplate>
+            </ComboBox.ItemTemplate>
+          </ComboBox>
+        </StackPanel>
+      </Border>
+
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

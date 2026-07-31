@@ -125,11 +125,14 @@ It shows:
   live **viewer** count.
 - An **audio visualizer** — a row of teal/blue gradient bars eased from the capture
   level meter, animating while capturing and resting on a flat line when idle.
-- **Latency / RTT** from the real WebRTC estimated round-trip time.
+- **Latency / RTT**, **jitter** and **packet loss** from the connected viewer's RTCP
+  reports about our audio stream, and **bitrate** from the negotiated Opus send bitrate
+  (issue #32). RTT is derived by correlating each sender report we emit with the receiver
+  report that echoes it (see `RtcpRoundTripEstimator`).
 
-Values that are not yet measured (jitter, packet loss, bitrate) are shown safely as
-`—`; plumbing them from WebRTC `getStats` is a deliberate follow-up. Design-time
-mock data (`DashboardViewModel.DesignTime`) lets the page preview without a session.
+Values with no reading yet are shown safely as `—` (until the first RTCP report
+correlates). Design-time mock data (`DashboardViewModel.DesignTime`) lets the page preview
+without a session.
 
 ## ICE servers and force relay
 
@@ -241,4 +244,4 @@ Exported diagnostic reports are designed to be safe to attach to a support reque
 
 ## Current deliverable
 
-The bootstrap provides a WinUI 3 application, capability-oriented class libraries, focused test projects, shared build settings, and documentation. It deliberately contains no simulated endpoints or placeholder production behavior.
+The publisher provides an Avalonia desktop application (which replaced the original WinUI 3 shell — issue #32), capability-oriented class libraries, focused test projects, shared build settings, and documentation. It deliberately contains no simulated endpoints or placeholder production behavior.

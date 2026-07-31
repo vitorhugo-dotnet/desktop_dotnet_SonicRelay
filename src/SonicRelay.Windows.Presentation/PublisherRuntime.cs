@@ -43,7 +43,8 @@ public sealed class PublisherRuntime : IAsyncDisposable
         AudioQualityStore audioQuality,
         IAudioCaptureService audioCapture,
         AudioOutputPreferenceStore audioOutput,
-        DeviceIdentitySession deviceIdentitySession)
+        DeviceIdentitySession deviceIdentitySession,
+        DiagnosticLog diagnosticLog)
     {
         this.httpClient = httpClient;
         this.peers = peers;
@@ -56,7 +57,7 @@ public sealed class PublisherRuntime : IAsyncDisposable
         AudioQuality = audioQuality;
         AudioCapture = audioCapture;
         AudioOutput = audioOutput;
-        DiagnosticLog = new DiagnosticLog();
+        DiagnosticLog = diagnosticLog;
         ReportExporter = new DiagnosticReportExporter();
         Workflow.StateChanged += OnWorkflowStateChanged;
         _ = WriteDiagnosticAsync("runtime", "Publisher runtime configured.", new Dictionary<string, string>
@@ -79,10 +80,15 @@ public sealed class PublisherRuntime : IAsyncDisposable
     /// <summary>
     /// Composes the shared publisher runtime for one backend. The platform shell
     /// supplies its capture implementation (WASAPI loopback on Windows, PipeWire on
-    /// Linux later — issue #32); this shared composition never references a concrete
-    /// capture backend.
+    /// Linux — issue #32) and, optionally, its own device-credential store and
+    /// audio-output preference store (Linux would use Secret Service instead of
+    /// DPAPI); omitting either keeps the existing Windows-default behavior.
     /// </summary>
-    public static PublisherRuntime Create(Uri backendBaseUrl, IAudioCaptureService audioCapture)
+    public static PublisherRuntime Create(
+        Uri backendBaseUrl,
+        IAudioCaptureService audioCapture,
+        IDeviceCredentialStore? credentialStoreOverride = null,
+        AudioOutputPreferenceStore? audioOutputPreferenceOverride = null)
     {
         ArgumentNullException.ThrowIfNull(backendBaseUrl);
         ArgumentNullException.ThrowIfNull(audioCapture);
@@ -96,12 +102,13 @@ public sealed class PublisherRuntime : IAsyncDisposable
         var configuration = new PublisherConfiguration(normalized, signalingUrl, 4);
         configuration.Validate();
         var http = new HttpClient { BaseAddress = normalized, Timeout = TimeSpan.FromSeconds(30) };
-        var credentialStore = new UserScopedDeviceCredentialStore();
+        var credentialStore = credentialStoreOverride ?? new UserScopedDeviceCredentialStore();
         var deviceIdentitySession = new DeviceIdentitySession(
             new DeviceIdentityApiClient(http),
             credentialStore,
             Environment.MachineName);
 
+        var diagnosticLog = new DiagnosticLog();
         // The WebRTC publisher needs the signaling client to send offers/candidates,
         // but the client takes its handlers up front — register the publisher through
         // a composite handler after both exist.
@@ -126,8 +133,12 @@ public sealed class PublisherRuntime : IAsyncDisposable
         var webRtcPublisher = new WebRtcPublisher(signaling, peers);
         signalingHandlers.Register(webRtcPublisher);
 
+        signaling.ReconnectAttempting += attempt => LogReconnectAttempt(diagnosticLog, attempt);
+        signaling.Closed += reason => LogSignalingClosed(diagnosticLog, reason);
+        webRtcPublisher.IceRestartRequested += viewerId => LogIceRestart(diagnosticLog, viewerId);
+
         var audio = audioCapture;
-        var audioOutput = new AudioOutputPreferenceStore();
+        var audioOutput = audioOutputPreferenceOverride ?? new AudioOutputPreferenceStore();
         // Restore the previously selected output device (null = system default).
         audio.SelectOutputDevice(audioOutput.SelectedDeviceId);
         var audioBridge = new WebRtcAudioBridge(audio, webRtcPublisher);
@@ -148,7 +159,8 @@ public sealed class PublisherRuntime : IAsyncDisposable
             audioQuality,
             audio,
             audioOutput,
-            deviceIdentitySession);
+            deviceIdentitySession,
+            diagnosticLog);
     }
 
     public async Task InitializeDeviceIdentityAsync(CancellationToken cancellationToken = default)
@@ -199,6 +211,38 @@ public sealed class PublisherRuntime : IAsyncDisposable
         {
             // Diagnostics must never interrupt publisher operation.
         }
+    }
+
+    private static readonly IReadOnlyDictionary<string, string> NoProperties = new Dictionary<string, string>();
+
+    private static async void LogReconnectAttempt(DiagnosticLog log, int attempt)
+    {
+        try { await log.WriteAsync("reconnect-attempt", $"Signaling reconnect attempt {attempt + 1}.", NoProperties); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ObjectDisposedException) { }
+    }
+
+    private static async void LogSignalingClosed(DiagnosticLog log, SignalingCloseReason reason)
+    {
+        try
+        {
+            await log.WriteAsync("signaling-closed", "Signaling connection closed.", new Dictionary<string, string>
+            {
+                ["reason"] = reason.ToString()
+            });
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ObjectDisposedException) { }
+    }
+
+    private static async void LogIceRestart(DiagnosticLog log, string viewerId)
+    {
+        try
+        {
+            await log.WriteAsync("ice-restart", "ICE restart requested for a reconnected viewer.", new Dictionary<string, string>
+            {
+                ["viewerId"] = viewerId
+            });
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ObjectDisposedException) { }
     }
 
     public async ValueTask DisposeAsync()

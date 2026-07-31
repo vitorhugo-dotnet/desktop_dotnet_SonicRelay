@@ -35,7 +35,7 @@ public interface IAudioCaptureService : IAudioDeviceEnumerator, IAsyncDisposable
     Task ResumeAsync(CancellationToken cancellationToken = default);
 }
 
-internal interface IAudioCaptureBackend : IAsyncDisposable
+public interface IAudioCaptureBackend : IAsyncDisposable
 {
     AudioDeviceInfo? Device { get; }
     event Action<AudioFrame, AudioLevelSnapshot>? FrameAvailable;

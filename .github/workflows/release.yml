@@ -5,6 +5,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Optional PR number: build and publish an alpha prerelease from that PR head (leave empty to build the selected branch).'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -14,12 +19,19 @@ jobs:
     name: Build, test, and release
     runs-on: windows-latest
     timeout-minutes: 60
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      target-sha: ${{ steps.release.outputs.target-sha }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # When a PR number is supplied, build that PR's head; otherwise the selected ref.
+          ref: ${{ github.event.inputs.pr_number && format('refs/pull/{0}/head', github.event.inputs.pr_number) || '' }}
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v4
@@ -46,14 +58,26 @@ jobs:
         id: release
         shell: pwsh
         run: |
+          $prNumber = '${{ github.event.inputs.pr_number }}'
+          $runNumber = '${{ github.run_number }}'
+
           if ('${{ github.ref_type }}' -eq 'tag') {
+            # Real, verified release from a v* tag.
             $tag = '${{ github.ref_name }}'
             $version = $tag.TrimStart('v')
-            $verifyTag = 'true'
-          } else {
-            $tag = 'v0.0.0-manual.${{ github.run_number }}'
-            $version = '0.0.0-manual.${{ github.run_number }}'
-            $verifyTag = 'false'
+            $prerelease = 'false'
+          }
+          elseif (-not [string]::IsNullOrWhiteSpace($prNumber)) {
+            # Manual alpha build from a specific PR head.
+            $tag = "v0.0.0-alpha.pr$prNumber.$runNumber"
+            $version = "0.0.0-alpha.pr$prNumber.$runNumber"
+            $prerelease = 'true'
+          }
+          else {
+            # Manual build of the selected branch (also a prerelease).
+            $tag = "v0.0.0-manual.$runNumber"
+            $version = "0.0.0-manual.$runNumber"
+            $prerelease = 'true'
           }
 
           $msiVersionBase = ($version -split '[+-]')[0]
@@ -63,17 +87,26 @@ jobs:
           }
           $msiVersion = "$($versionParts[0]).$($versionParts[1]).$($versionParts[2])"
 
+          # The commit actually checked out (the PR head for an alpha build), used as the
+          # release target so the tag points at exactly what was built.
+          $targetSha = (git rev-parse HEAD).Trim()
+
           "tag=$tag" >> $env:GITHUB_OUTPUT
           "version=$version" >> $env:GITHUB_OUTPUT
           "msi-version=$msiVersion" >> $env:GITHUB_OUTPUT
-          "verify-tag=$verifyTag" >> $env:GITHUB_OUTPUT
+          "prerelease=$prerelease" >> $env:GITHUB_OUTPUT
+          "target-sha=$targetSha" >> $env:GITHUB_OUTPUT
+          "pr-number=$prNumber" >> $env:GITHUB_OUTPUT
+
+      - name: Restore Windows x64 publish dependencies
+        run: >-
+          dotnet restore src/SonicRelay.Windows.Desktop/SonicRelay.Windows.Desktop.csproj
+          --runtime win-x64
 
       - name: Publish portable Windows x64 app
         run: >-
-          dotnet publish src/SonicRelay.Windows.App/SonicRelay.Windows.App.csproj
+          dotnet publish src/SonicRelay.Windows.Desktop/SonicRelay.Windows.Desktop.csproj
           --configuration Release --runtime win-x64 --self-contained true --no-restore
-          -p:WindowsPackageType=None
-          -p:WindowsAppSDKSelfContained=true
           --output artifacts/publish/win-x64
 
       - name: Install WiX toolset
@@ -146,34 +179,108 @@ jobs:
           "msi=$msiPath" >> $env:GITHUB_OUTPUT
           "checksums=$checksumsPath" >> $env:GITHUB_OUTPUT
 
-      - name: Create GitHub Release for tag
-        if: github.ref_type == 'tag'
+      - name: Create GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create '${{ steps.release.outputs.tag }}' `
-            '${{ steps.assets.outputs.zip }}' `
-            '${{ steps.assets.outputs.exe }}' `
-            '${{ steps.assets.outputs.msi }}' `
-            '${{ steps.assets.outputs.checksums }}' `
-            --title 'SonicRelay Windows Publisher ${{ steps.release.outputs.tag }}' `
-            --generate-notes `
-            --verify-tag `
-            --notes "Build version: ${{ steps.release.outputs.version }}`nCommit: ${{ github.sha }}`nRuntime: win-x64"
+          $tag = '${{ steps.release.outputs.tag }}'
+          $version = '${{ steps.release.outputs.version }}'
+          $targetSha = '${{ steps.release.outputs.target-sha }}'
+          $prNumber = '${{ steps.release.outputs.pr-number }}'
+          $isPrerelease = '${{ steps.release.outputs.prerelease }}' -eq 'true'
 
-      - name: Create GitHub Release for manual run
-        if: github.ref_type != 'tag'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create '${{ steps.release.outputs.tag }}' `
+          if (-not [string]::IsNullOrWhiteSpace($prNumber)) {
+            $title = "SonicRelay Windows Publisher $tag (alpha, PR #$prNumber)"
+          } else {
+            $title = "SonicRelay Windows Publisher $tag"
+          }
+
+          $extraArgs = @()
+          if ('${{ github.ref_type }}' -eq 'tag') {
+            # A pushed v* tag already exists; verify it points at this build.
+            $extraArgs += '--verify-tag'
+          } else {
+            # Manual runs create the tag on the built commit (the PR head for an alpha build).
+            $extraArgs += @('--target', $targetSha)
+          }
+          if ($isPrerelease) {
+            $extraArgs += '--prerelease'
+          }
+
+          gh release create $tag `
             '${{ steps.assets.outputs.zip }}' `
             '${{ steps.assets.outputs.exe }}' `
             '${{ steps.assets.outputs.msi }}' `
             '${{ steps.assets.outputs.checksums }}' `
-            --target '${{ github.sha }}' `
-            --title 'SonicRelay Windows Publisher ${{ steps.release.outputs.tag }}' `
+            --title $title `
             --generate-notes `
-            --notes "Build version: ${{ steps.release.outputs.version }}`nCommit: ${{ github.sha }}`nRuntime: win-x64"
+            --notes "Build version: $version`nCommit: $targetSha`nRuntime: win-x64" `
+            @extraArgs
+
+  linux-package:
+    name: Package Linux release assets
+    needs: build-test-and-release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          # Same commit the Windows job just built and released, so both platforms'
+          # assets come from the identical tag/commit (issue #40 acceptance criteria).
+          ref: ${{ needs.build-test-and-release.outputs.target-sha }}
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore Linux x64 publish dependencies
+        run: >-
+          dotnet restore src/SonicRelay.Windows.Desktop/SonicRelay.Windows.Desktop.csproj
+          --runtime linux-x64
+
+      - name: Publish self-contained Linux x64 app
+        run: >-
+          dotnet publish src/SonicRelay.Windows.Desktop/SonicRelay.Windows.Desktop.csproj
+          --configuration Release --runtime linux-x64 --self-contained true --no-restore
+          --output artifacts/publish/linux-x64
+
+      - name: Install fpm
+        run: sudo gem install --no-document fpm
+
+      - name: Build tar.gz, deb, and rpm packages
+        run: >-
+          packaging/linux/build-packages.sh
+          artifacts/publish/linux-x64
+          '${{ needs.build-test-and-release.outputs.version }}'
+          '${{ needs.build-test-and-release.outputs.target-sha }}'
+          artifacts/release
+
+      - name: Extend the release's checksums and notes with the Linux assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build-test-and-release.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.build-test-and-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          distDir=artifacts/release
+
+          # Merge into the Windows job's checksums-sha256.txt so there is one canonical
+          # checksums file per release, covering every platform's assets.
+          gh release download "$RELEASE_TAG" --pattern checksums-sha256.txt --dir "$distDir" --clobber
+          ( cd "$distDir" && sha256sum SonicRelay-LinuxPublisher-*.tar.gz SonicRelay-LinuxPublisher-*.deb SonicRelay-LinuxPublisher-*.rpm >> checksums-sha256.txt )
+
+          currentNotes=$(gh release view "$RELEASE_TAG" --json body --jq .body)
+          linuxNotes=$(printf '\n\n## Linux assets\n\n- `SonicRelay-LinuxPublisher-linux-x64-%s.tar.gz`: portable self-contained folder archive.\n- `SonicRelay-LinuxPublisher-linux-x64-%s.deb`: Debian/Ubuntu package (officially Ubuntu 24.04).\n- `SonicRelay-LinuxPublisher-linux-x64-%s.rpm`: Fedora package (best effort).\n\nSee `docs/linux-publisher.md` for installation, dependencies, and known limitations.\n' "$RELEASE_VERSION" "$RELEASE_VERSION" "$RELEASE_VERSION")
+
+          gh release edit "$RELEASE_TAG" --notes "${currentNotes}${linuxNotes}"
+
+          gh release upload "$RELEASE_TAG" \
+            "$distDir"/SonicRelay-LinuxPublisher-*.tar.gz \
+            "$distDir"/SonicRelay-LinuxPublisher-*.deb \
+            "$distDir"/SonicRelay-LinuxPublisher-*.rpm \
+            "$distDir/checksums-sha256.txt" \
+            --clobber

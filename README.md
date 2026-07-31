@@ -8,7 +8,7 @@ Installing, configuring, and running the Windows Publisher must not require admi
 
 ## Current status
 
-This repository contains the .NET 10 and WinUI 3 publisher, device-identity HTTP clients, secure QR pairing, WASAPI loopback capture, WebRTC/Opus publishing, and DeviceBearer WebSocket signaling.
+This repository contains the .NET 10 publisher: a cross-platform **Avalonia** desktop shell (Windows today, Linux later — issue #32), device-identity HTTP clients, secure QR pairing, WASAPI loopback capture, WebRTC/Opus publishing, and DeviceBearer WebSocket signaling.
 
 ## Prerequisites
 
@@ -34,20 +34,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests/Repository.Structure.T
 
 ## Continuous integration
 
-GitHub Actions runs CI for every pull request, every push to `main`, every `v*` tag, and manual workflow dispatches. The workflow uses the SDK selected by `global.json`, restores dependencies, builds the complete solution in Release configuration, runs the repository structure test, runs all solution tests, and uploads available TRX test results as the `test-results` artifact.
+GitHub Actions runs CI (`.github/workflows/ci.yml`) for every pull request and every push to `main`, as a matrix across `windows-latest` and `ubuntu-24.04` — both are required checks. The workflow uses the SDK selected by `global.json`, restores dependencies, builds the complete solution in Release configuration, runs the repository structure test, runs all solution tests, and uploads available TRX test results per OS (`test-results-<os>`). The Ubuntu leg additionally runs a Linux startup smoke test that launches the actual published `linux-x64` binary under a virtual display and confirms it starts and stays up.
 
-After build and tests pass on non-PR runs, the workflow publishes Windows x64 release assets:
+On non-PR runs (pushes to `main` and manual dispatches), the same workflow also publishes Windows x64 release assets — `SonicRelay.WindowsPublisher-win-x64-<version>.zip`/`.exe`/`.msi` plus `checksums-sha256.txt` — uploaded back to the workflow run, and to a `dev-<run-number>` (or manually chosen) prerelease on GitHub Releases.
 
-- `SonicRelay.WindowsPublisher-win-x64-<version>.zip`: portable folder distribution.
-- `SonicRelay.WindowsPublisher-win-x64-<version>.exe`: portable single-file executable.
-- `SonicRelay.WindowsPublisher-win-x64-<version>.msi`: per-user MSI installer under the current user's LocalAppData path, with a Start Menu shortcut for launching the app.
-- `checksums-sha256.txt`: SHA-256 checksums for the release packages.
+The separate **Release** workflow (`.github/workflows/release.yml`) is the official release pipeline: it triggers on `v*` tags or manual dispatch. Its Windows job builds, tests, and publishes the ZIP/EXE/MSI assets and creates the GitHub Release; a dependent Linux job then checks out the identical commit, publishes self-contained `linux-x64`, and builds `.tar.gz` (portable), `.deb` (Ubuntu/Debian), and `.rpm` (Fedora) — see [`docs/linux-publisher.md`](docs/linux-publisher.md) for installation, dependencies, and supported systems. Both platforms' assets share one tag/commit and one extended `checksums-sha256.txt`. On a manual run you can set the optional `pr_number` input: the workflow then checks out **that pull request's head**, runs the full build and tests, and publishes the same assets as a **prerelease** tagged `v0.0.0-alpha.pr<number>.<run-number>` targeting the PR's commit — an alpha test build straight from a PR, without merging. A manual run without `pr_number` builds the selected branch as a `v0.0.0-manual.<run-number>` prerelease.
 
-Package artifacts are uploaded back to the workflow run. Pushing a tag matching `v*` (for example, `v0.1.0`) or running the workflow manually also publishes those assets to GitHub Releases. Manual runs without a version create a prerelease tag named `dev-<run-number>`.
+The package flow keeps the app unpackaged and per-user (Windows) or standard-package/portable (Linux). It does not introduce services, drivers, firewall changes, machine-wide writes, or an administrator requirement for normal *usage* (installing/upgrading/removing the `.deb`/`.rpm` itself, like any system package, does need the usual package-manager authorization). The generated packages are currently unsigned.
 
-The package flow keeps the app unpackaged and per-user. It does not introduce services, drivers, firewall changes, machine-wide writes, or an administrator requirement for normal usage. The generated packages are currently unsigned.
-
-The app is an unpackaged WinUI 3 executable. Select `SonicRelay.Windows.App` as the startup project when launching it from an IDE.
+The app is an unpackaged Avalonia executable. Select `SonicRelay.Windows.Desktop` as the startup project when launching it from an IDE.
 
 ## Download a release
 
@@ -56,6 +51,7 @@ Open the repository's [Releases page](https://github.com/vitorhugo-java/windows_
 - ZIP: extract it to a user-writable folder such as one under your profile and run `SonicRelay.Windows.App.exe` directly. Do not run it as administrator.
 - EXE: run the portable single-file executable directly as the current user.
 - MSI: install it as the current user, then launch `SonicRelay Windows Publisher` from the Start Menu. The installed files live under `%LOCALAPPDATA%\SonicRelay\WindowsPublisher`.
+- `.deb`/`.rpm`/`.tar.gz` (Linux): see [`docs/linux-publisher.md`](docs/linux-publisher.md) for installation, dependencies, and supported distributions.
 
 Before approving a release, run the [non-admin release smoke test](docs/release-smoke-test.md) from a clean standard-user environment. Every mandatory item is a release gate.
 
@@ -96,4 +92,6 @@ The WebSocket carries signaling control messages only. It does not carry audio; 
 5. WebRTC/Opus publication with one peer connection per viewer.
 6. Reliability, diagnostics, packaging, and release automation.
 
-See [the publisher specification](docs/windows-publisher.md), [architecture notes](docs/architecture.md), [non-admin checklist](docs/non-admin-checklist.md), and [release smoke test](docs/release-smoke-test.md) for the planned system boundaries and release gates.
+The desktop shell is a shared cross-platform Avalonia UI app, now shipping on Windows and Linux — see [the Avalonia desktop shell notes](docs/avalonia-desktop-shell.md) and [the Linux publisher notes](docs/linux-publisher.md) (issue #32). It replaced the original WinUI 3 shell once it reached functional parity.
+
+See [the publisher specification](docs/windows-publisher.md), [the Linux publisher notes](docs/linux-publisher.md), [architecture notes](docs/architecture.md), [non-admin checklist](docs/non-admin-checklist.md), and [release smoke test](docs/release-smoke-test.md) for the planned system boundaries and release gates.

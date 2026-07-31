@@ -171,6 +171,99 @@ public sealed class WebRtcPublisherTests
     }
 
     [Fact]
+    public async Task ParticipantReconnectedRestartsIceOnTheExistingPeerInsteadOfRecreatingIt()
+    {
+        var context = CreateContext();
+        await using var publisher = context.Publisher;
+        await ReadyAsync(publisher, "viewer-1");
+        context.Signaling.Messages.Clear();
+
+        await publisher.HandleAsync(new(SignalingMessageTypes.ParticipantReconnected, "session-1", From: "viewer-1"));
+
+        Assert.Single(context.Factory.Peers); // no new peer created
+        var peer = Assert.Single(context.Factory.Peers);
+        Assert.Equal(1, peer.IceRestartCount);
+        Assert.Equal(1, peer.OfferCount); // the original offer only, restart doesn't call CreateOfferAsync
+        var offer = Assert.Single(context.Signaling.Messages);
+        Assert.Equal(SignalingMessageTypes.WebRtcOffer, offer.Type);
+        Assert.Equal("viewer-1", offer.To);
+        Assert.Equal("restart-viewer-1-1", offer.Payload!.Value.GetProperty("sdp").GetString());
+    }
+
+    [Fact]
+    public async Task ParticipantReconnectedRaisesIceRestartRequestedForTheViewer()
+    {
+        var context = CreateContext();
+        await using var publisher = context.Publisher;
+        await ReadyAsync(publisher, "viewer-1");
+        var requested = new List<string>();
+        publisher.IceRestartRequested += requested.Add;
+
+        await publisher.HandleAsync(new(SignalingMessageTypes.ParticipantReconnected, "session-1", From: "viewer-1"));
+
+        Assert.Equal(["viewer-1"], requested);
+    }
+
+    [Fact]
+    public async Task ParticipantReconnectedForAnUnregisteredViewerDoesNotRaiseIceRestartRequested()
+    {
+        var context = CreateContext();
+        await using var publisher = context.Publisher;
+        var requested = new List<string>();
+        publisher.IceRestartRequested += requested.Add;
+
+        await publisher.HandleAsync(new(SignalingMessageTypes.ParticipantReconnected, "session-1", From: "viewer-1"));
+
+        Assert.Empty(requested);
+    }
+
+    [Fact]
+    public async Task ParticipantReconnectedForAnUnregisteredViewerFallsBackToAFreshOffer()
+    {
+        var context = CreateContext();
+        await using var publisher = context.Publisher;
+
+        await publisher.HandleAsync(new(SignalingMessageTypes.ParticipantReconnected, "session-1", From: "viewer-1"));
+
+        var peer = Assert.Single(context.Factory.Peers);
+        Assert.Equal(0, peer.IceRestartCount);
+        Assert.Equal(1, peer.OfferCount);
+        var offer = Assert.Single(context.Signaling.Messages);
+        Assert.Equal(SignalingMessageTypes.WebRtcOffer, offer.Type);
+        Assert.Equal("viewer-1", offer.To);
+    }
+
+    [Fact]
+    public async Task ParticipantDisconnectedDoesNotTearDownTheExistingPeer()
+    {
+        var context = CreateContext();
+        await using var publisher = context.Publisher;
+        await ReadyAsync(publisher, "viewer-1");
+        context.Signaling.Messages.Clear();
+
+        await publisher.HandleAsync(new(SignalingMessageTypes.ParticipantDisconnected, "session-1", From: "viewer-1"));
+
+        Assert.Single(context.Factory.Peers);
+        Assert.False(context.Factory.Peers[0].Disposed);
+        Assert.Empty(context.Signaling.Messages);
+    }
+
+    [Fact]
+    public async Task IceRestartFailureRemovesTheViewerLikeAnOfferFailure()
+    {
+        var context = CreateContext();
+        await using var publisher = context.Publisher;
+        await ReadyAsync(publisher, "viewer-1");
+        context.Factory.Peers[0].CreateIceRestartOfferException = new InvalidOperationException("restart failed");
+
+        await Assert.ThrowsAsync<WebRtcPublisherException>(() => publisher.HandleAsync(
+            new(SignalingMessageTypes.ParticipantReconnected, "session-1", From: "viewer-1")));
+
+        Assert.True(context.Factory.Peers[0].Disposed);
+        Assert.Equal(0, publisher.Diagnostics.ViewerConnectionCount);
+    }
+
+    [Fact]
     public async Task InvalidInboundPayloadUpdatesLastError()
     {
         var context = CreateContext();
@@ -218,6 +311,8 @@ public sealed class WebRtcPublisherTests
         public List<SignalingMessageEnvelope> Messages { get; } = [];
         public SignalingConnectionState State => SignalingConnectionState.Connected;
         public event Action<SignalingConnectionState>? StateChanged { add { } remove { } }
+        public event Action<int>? ReconnectAttempting { add { } remove { } }
+        public event Action<SignalingCloseReason>? Closed { add { } remove { } }
         public Task ConnectAsync(string sessionId, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task CloseAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task SendAsync(SignalingMessageEnvelope message, CancellationToken cancellationToken = default)
@@ -244,12 +339,14 @@ public sealed class WebRtcPublisherTests
     {
         public string ViewerId { get; } = viewerId;
         public int OfferCount { get; private set; }
+        public int IceRestartCount { get; private set; }
         public WebRtcSessionDescription? Answer { get; private set; }
         public List<WebRtcIceCandidate> RemoteCandidates { get; } = [];
         public List<WebRtcAudioFrame> Frames { get; } = [];
         public PeerConnectionDiagnostics Diagnostics { get; private set; } = new(viewerId, PeerConnectionState.New);
         public bool Disposed { get; private set; }
         public Exception? CreateOfferException { get; init; }
+        public Exception? CreateIceRestartOfferException { get; set; }
         public event Func<WebRtcIceCandidate, CancellationToken, Task>? LocalIceCandidateReady;
         public event Action? DiagnosticsChanged;
 
@@ -258,6 +355,12 @@ public sealed class WebRtcPublisherTests
             if (CreateOfferException is not null) return Task.FromException<WebRtcSessionDescription>(CreateOfferException);
             OfferCount++;
             return Task.FromResult(new WebRtcSessionDescription("offer", $"offer-{ViewerId}"));
+        }
+        public Task<WebRtcSessionDescription> CreateIceRestartOfferAsync(CancellationToken cancellationToken = default)
+        {
+            if (CreateIceRestartOfferException is not null) return Task.FromException<WebRtcSessionDescription>(CreateIceRestartOfferException);
+            IceRestartCount++;
+            return Task.FromResult(new WebRtcSessionDescription("offer", $"restart-{ViewerId}-{IceRestartCount}"));
         }
         public Task ApplyAnswerAsync(WebRtcSessionDescription answer, CancellationToken cancellationToken = default)
         {

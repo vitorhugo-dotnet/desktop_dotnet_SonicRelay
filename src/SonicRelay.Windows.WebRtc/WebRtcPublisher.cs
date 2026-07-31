@@ -24,6 +24,7 @@ public sealed class WebRtcPublisher : IWebRtcPublisher
         new(peers.ViewerCount, peers.GetDiagnostics(), lastError);
 
     public event Action<WebRtcPublisherDiagnostics>? DiagnosticsChanged;
+    public event Action<string>? IceRestartRequested;
 
     public async Task HandleAsync(SignalingMessageEnvelope message, CancellationToken cancellationToken = default)
     {
@@ -51,11 +52,21 @@ public sealed class WebRtcPublisher : IWebRtcPublisher
                     ValidateSession(message);
                     await peers.RemoveViewerAsync(message.From, cancellationToken);
                     break;
+                case SignalingMessageTypes.ParticipantReconnected when message.From is not null:
+                    var reconnectSessionId = RequireSessionId(message);
+                    activeSessionId ??= reconnectSessionId;
+                    ValidateSession(message);
+                    await ReofferToViewerAsync(reconnectSessionId, message.From, cancellationToken);
+                    break;
                 case SignalingMessageTypes.SessionEnded:
                     ValidateSession(message);
                     await peers.RemoveAllAsync(cancellationToken);
                     activeSessionId = null;
                     break;
+                // ParticipantDisconnected is intentionally a no-op: it just means the
+                // viewer's socket dropped within the backend's reconnect grace period.
+                // The peer connection is left alone; ParticipantReconnected (above) or the
+                // peer's own ICE recovery drives any renegotiation.
             }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -118,13 +129,7 @@ public sealed class WebRtcPublisher : IWebRtcPublisher
         try
         {
             var offer = await registration.Peer.Connection.CreateOfferAsync(cancellationToken);
-            await signaling.SendAsync(
-                new SignalingMessageEnvelope(
-                    SignalingMessageTypes.WebRtcOffer,
-                    sessionId,
-                    viewerId,
-                    JsonSerializer.SerializeToElement(offer, JsonOptions)),
-                cancellationToken);
+            await SendOfferAsync(sessionId, viewerId, offer, cancellationToken);
         }
         catch
         {
@@ -132,6 +137,41 @@ public sealed class WebRtcPublisher : IWebRtcPublisher
             throw;
         }
     }
+
+    // A `participant.reconnected` announcement means the same participant re-opened its
+    // signaling socket within the backend's grace period. Whatever dropped the socket
+    // likely took ICE down with it too, so renegotiate the existing peer with an ICE
+    // restart instead of tearing it down and losing playback state. If no peer exists yet
+    // (e.g. the publisher itself only just adopted the session), fall back to a normal
+    // fresh offer.
+    private async Task ReofferToViewerAsync(string sessionId, string viewerId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var restartOffer = await peers.RequestIceRestartAsync(viewerId, cancellationToken);
+            if (restartOffer is null)
+            {
+                await OfferToViewerAsync(sessionId, viewerId, cancellationToken);
+                return;
+            }
+            IceRestartRequested?.Invoke(viewerId);
+            await SendOfferAsync(sessionId, viewerId, restartOffer, cancellationToken);
+        }
+        catch
+        {
+            await peers.RemoveViewerAsync(viewerId, CancellationToken.None);
+            throw;
+        }
+    }
+
+    private Task SendOfferAsync(string sessionId, string viewerId, WebRtcSessionDescription offer, CancellationToken cancellationToken) =>
+        signaling.SendAsync(
+            new SignalingMessageEnvelope(
+                SignalingMessageTypes.WebRtcOffer,
+                sessionId,
+                viewerId,
+                JsonSerializer.SerializeToElement(offer, JsonOptions)),
+            cancellationToken);
 
     private static bool IsViewerJoin(SignalingMessageEnvelope message)
     {

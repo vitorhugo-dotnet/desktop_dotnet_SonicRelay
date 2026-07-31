@@ -5,8 +5,6 @@ on:
   push:
     branches:
       - main
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       release_version:
@@ -20,16 +18,20 @@ permissions:
 
 env:
   SOLUTION_PATH: SonicRelay.Windows.slnx
-  APP_PROJECT_PATH: src/SonicRelay.Windows.App/SonicRelay.Windows.App.csproj
+  APP_PROJECT_PATH: src/SonicRelay.Windows.Desktop/SonicRelay.Windows.Desktop.csproj
   CONFIGURATION: Release
   RUNTIME_ID: win-x64
-  APP_EXE_NAME: SonicRelay.Windows.App.exe
+  APP_EXE_NAME: SonicRelay.Windows.Desktop.exe
   PRODUCT_NAME: SonicRelay.WindowsPublisher
 
 jobs:
   build-and-test:
     name: Build and test
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
 
     steps:
@@ -48,8 +50,8 @@ jobs:
         run: dotnet build SonicRelay.Windows.slnx --configuration Release --no-restore
 
       - name: Run repository structure tests
-        shell: powershell
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/Repository.Structure.Tests.ps1
+        shell: pwsh
+        run: ./tests/Repository.Structure.Tests.ps1
 
       - name: Run .NET tests
         run: >-
@@ -57,11 +59,51 @@ jobs:
           --logger "trx;LogFilePrefix=sonicrelay"
           --results-directory TestResults
 
+      # The Desktop.Tests project already boots the real Avalonia App/MainWindow through the
+      # headless Skia backend (ShellRenderTests), so `dotnet test` above already covers layout
+      # smoke coverage on Linux. This step additionally launches the actual published Linux
+      # binary under a virtual display to prove the real entry point (Program.Main ->
+      # DesktopRuntimeFactory -> Linux composition) starts and stays up without a live PipeWire
+      # session, Secret Service, or backend available, matching the design spec's Linux startup
+      # smoke test requirement.
+      - name: Install Linux desktop smoke-test dependencies
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb xauth
+
+      - name: Avalonia Linux startup smoke test
+        if: matrix.os == 'ubuntu-24.04'
+        shell: bash
+        run: |
+          set -euo pipefail
+          publishDir="$RUNNER_TEMP/smoke-publish"
+          dotnet publish "$APP_PROJECT_PATH" \
+            --configuration "$CONFIGURATION" \
+            --runtime linux-x64 \
+            --self-contained true \
+            -o "$publishDir"
+
+          chmod +x "$publishDir/SonicRelay.Windows.Desktop"
+
+          xvfb-run --auto-servernum "$publishDir/SonicRelay.Windows.Desktop" &
+          appPid=$!
+
+          sleep 8
+
+          if ! kill -0 "$appPid" 2>/dev/null; then
+            echo "::error::SonicRelay.Windows.Desktop exited before the smoke-test window elapsed"
+            exit 1
+          fi
+
+          kill "$appPid"
+          wait "$appPid" 2>/dev/null || true
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results
+          name: test-results-${{ matrix.os }}
           path: TestResults/*.trx
           if-no-files-found: ignore
           retention-days: 14
@@ -132,8 +174,6 @@ jobs:
             --runtime $env:RUNTIME_ID `
             --self-contained true `
             --no-restore `
-            -p:WindowsPackageType=None `
-            -p:WindowsAppSDKSelfContained=true `
             -p:PublishSingleFile=false `
             -p:DebugType=embedded `
             -o $publishDir
@@ -158,8 +198,6 @@ jobs:
             --runtime $env:RUNTIME_ID `
             --self-contained true `
             --no-restore `
-            -p:WindowsPackageType=None `
-            -p:WindowsAppSDKSelfContained=true `
             -p:PublishSingleFile=true `
             -p:IncludeNativeLibrariesForSelfExtract=true `
             -p:EnableCompressionInSingleFile=true `

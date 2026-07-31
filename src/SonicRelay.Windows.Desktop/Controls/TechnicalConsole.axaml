@@ -1,0 +1,30 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:SonicRelay.Windows.Desktop.ViewModels"
+             x:Class="SonicRelay.Windows.Desktop.Controls.TechnicalConsole"
+             x:DataType="vm:DashboardShellViewModel">
+  <Border Classes="card">
+    <DockPanel LastChildFill="True">
+      <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,10">
+        <TextBlock Classes="card-title" Text="Technical console" />
+        <TextBlock Grid.Column="1" Classes="section-eyebrow" Text="EVENT LOG" VerticalAlignment="Center" />
+      </Grid>
+      <Border Classes="card-elevated" MinHeight="120">
+        <ScrollViewer x:Name="Scroller" VerticalScrollBarVisibility="Auto">
+          <ItemsControl ItemsSource="{Binding ActivityLog}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="x:String">
+                <TextBlock Classes="mono"
+                           FontSize="{StaticResource Sonic.FontSizeCaption}"
+                           Foreground="{DynamicResource Sonic.TextSecondaryBrush}"
+                           TextWrapping="Wrap"
+                           Margin="0,1"
+                           Text="{Binding}" />
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+      </Border>
+    </DockPanel>
+  </Border>
+</UserControl>
