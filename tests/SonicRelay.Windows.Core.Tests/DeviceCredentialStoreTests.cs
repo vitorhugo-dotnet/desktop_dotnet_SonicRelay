@@ -24,6 +24,13 @@ public sealed class DeviceCredentialStoreTests : IDisposable
     [Fact]
     public async Task Failed_replacement_leaves_the_existing_credential_readable()
     {
+        // A shared-read handle only blocks a same-process rename over the target on
+        // Windows' mandatory locking; POSIX rename() happily replaces an open file, so
+        // this scenario cannot be exercised on Linux/macOS (matches the existing
+        // OperatingSystem-guard convention used for other platform-specific tests, e.g.
+        // LinuxProcessRunnerTests).
+        if (!OperatingSystem.IsWindows()) return;
+
         var store = CreateStore();
         var existing = new DeviceCredential(DeviceId, "old-secret", 1, "windows_publisher", "windows");
         var replacement = existing with { CredentialSecret = "new-secret", CredentialVersion = 2 };
