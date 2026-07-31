@@ -67,25 +67,43 @@ public sealed class ShellRenderTests
     }
 
     [AvaloniaFact]
-    public void Login_surface_renders_for_an_unauthenticated_shell()
+    public void Pairing_surface_renders_for_an_unpaired_shell()
     {
+        var viewModel = new MainWindowViewModel();
         var window = new MainWindow
         {
-            // Fresh view model with no runtime: ShowLogin is true, so the sign-in surface shows.
-            DataContext = new MainWindowViewModel(),
+            // Fresh view model with no runtime: ShowPairing is true, so the pairing surface
+            // shows instead of the dashboard (issue #26).
+            DataContext = viewModel,
         };
 
         window.Show();
 
         var frame = window.CaptureRenderedFrame();
         Assert.NotNull(frame);
+        Assert.True(viewModel.ShowPairing);
 
         var dir = Environment.GetEnvironmentVariable("SHELL_SHOT_DIR");
         if (!string.IsNullOrWhiteSpace(dir))
         {
             Directory.CreateDirectory(dir);
-            frame!.Save(Path.Combine(dir, "login-preview.png"));
+            frame!.Save(Path.Combine(dir, "pairing-preview.png"));
         }
+    }
+
+    [AvaloniaFact]
+    public void Dashboard_renders_once_the_shell_is_paired()
+    {
+        // CreatePreview's snapshot has IsAuthenticated = true (device identity ready), so the
+        // shell must show the dashboard rather than the pairing surface (issue #26).
+        var viewModel = MainWindowViewModel.CreatePreview();
+        var window = new MainWindow { DataContext = viewModel };
+
+        window.Show();
+
+        var frame = window.CaptureRenderedFrame();
+        Assert.NotNull(frame);
+        Assert.False(viewModel.ShowPairing);
     }
 
     [AvaloniaFact]
