@@ -1,5 +1,5 @@
 using System.Net;
-using SonicRelay.Windows.Core.Storage;
+using SonicRelay.Windows.Core.Authentication;
 
 namespace SonicRelay.Windows.ApiClient.Tests;
 
@@ -15,24 +15,11 @@ internal sealed class FakeHttpMessageHandler(Func<HttpRequestMessage, Cancellati
     };
 }
 
-internal sealed class MemoryTokenStore(TokenSet? initial = null) : ITokenStore
+/// <summary>A fixed device-access token, for tests that don't care about token refresh.</summary>
+internal sealed class StaticAccessTokenProvider(string token) : IDeviceAccessTokenProvider
 {
-    public TokenSet? Tokens { get; private set; } = initial;
-
-    public Task<TokenStorageResult> SaveAsync(TokenSet tokens, CancellationToken cancellationToken = default)
-    {
-        Tokens = tokens;
-        return Task.FromResult(TokenStorageResult.Success(tokens));
-    }
-
-    public Task<TokenStorageResult> LoadAsync(CancellationToken cancellationToken = default) =>
-        Task.FromResult(TokenStorageResult.Success(Tokens));
-
-    public Task<TokenStorageResult> DeleteAsync(CancellationToken cancellationToken = default)
-    {
-        Tokens = null;
-        return Task.FromResult(TokenStorageResult.Success());
-    }
+    public Task<string> GetAccessTokenAsync(bool forceRefresh = false, CancellationToken cancellationToken = default) =>
+        Task.FromResult(token);
 }
 
 internal static class TestClient

@@ -2,10 +2,8 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
-using SonicRelay.Windows.ApiClient.Authentication;
 using SonicRelay.Windows.ApiClient.Errors;
 using SonicRelay.Windows.Core.Authentication;
-using SonicRelay.Windows.Core.Storage;
 
 namespace SonicRelay.Windows.ApiClient;
 
@@ -13,14 +11,7 @@ internal sealed class ApiHttpClient
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly HttpClient httpClient;
-    private readonly ITokenStore? tokenStore;
-    private readonly IDeviceAccessTokenProvider? deviceAccessTokenProvider;
-
-    public ApiHttpClient(HttpClient httpClient, ITokenStore tokenStore)
-    {
-        this.httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
-        this.tokenStore = tokenStore ?? throw new ArgumentNullException(nameof(tokenStore));
-    }
+    private readonly IDeviceAccessTokenProvider deviceAccessTokenProvider;
 
     public ApiHttpClient(HttpClient httpClient, IDeviceAccessTokenProvider deviceAccessTokenProvider)
     {
@@ -44,7 +35,6 @@ internal sealed class ApiHttpClient
             response.StatusCode,
             authenticated,
             replaySafe,
-            authentication,
             cancellationToken);
         if (replay.ShouldReplay)
         {
@@ -70,7 +60,6 @@ internal sealed class ApiHttpClient
             response.StatusCode,
             authenticated,
             replaySafe,
-            authentication,
             cancellationToken);
         if (replay.ShouldReplay)
         {
@@ -80,32 +69,6 @@ internal sealed class ApiHttpClient
         }
 
         await EnsureSuccessAsync(response, cancellationToken);
-    }
-
-    public async Task<TokenSet> RefreshTokensAsync(string refreshToken, CancellationToken cancellationToken)
-    {
-        var response = await SendAsync<IdentityTokenResponse>(
-            HttpMethod.Post,
-            "/auth/refresh",
-            new RefreshTokenRequest(refreshToken),
-            authenticated: false,
-            cancellationToken,
-            replaySafe: false);
-        var tokens = response.ToTokenSet();
-        await SaveTokensAsync(tokens, cancellationToken);
-        return tokens;
-    }
-
-    public Task SaveTokensAsync(TokenSet tokens, CancellationToken cancellationToken) =>
-        SaveTokensCoreAsync(tokens, cancellationToken);
-
-    public async Task ClearTokensAsync(CancellationToken cancellationToken)
-    {
-        var result = await RequireTokenStore().DeleteAsync(cancellationToken);
-        if (!result.Succeeded)
-        {
-            throw new ApiClientException(ApiErrorKind.Unknown, result.Message ?? "Authentication tokens could not be cleared.");
-        }
     }
 
     private async Task<HttpResponseMessage> SendOnceAsync(
@@ -244,25 +207,6 @@ internal sealed class ApiHttpClient
         return true;
     }
 
-    private async Task<TokenSet?> LoadTokensAsync(CancellationToken cancellationToken)
-    {
-        var result = await RequireTokenStore().LoadAsync(cancellationToken);
-        if (!result.Succeeded)
-        {
-            throw new ApiClientException(ApiErrorKind.Unknown, result.Message ?? "Authentication tokens could not be loaded.");
-        }
-        return result.Tokens;
-    }
-
-    private async Task SaveTokensCoreAsync(TokenSet tokens, CancellationToken cancellationToken)
-    {
-        var result = await RequireTokenStore().SaveAsync(tokens, cancellationToken);
-        if (!result.Succeeded)
-        {
-            throw new ApiClientException(ApiErrorKind.Unknown, result.Message ?? "Authentication tokens could not be saved.");
-        }
-    }
-
     private async Task<RequestAuthentication> ResolveAuthenticationAsync(
         bool authenticated,
         CancellationToken cancellationToken)
@@ -272,22 +216,14 @@ internal sealed class ApiHttpClient
             return default;
         }
 
-        if (deviceAccessTokenProvider is not null)
-        {
-            return new RequestAuthentication(
-                await deviceAccessTokenProvider.GetAccessTokenAsync(cancellationToken: cancellationToken),
-                null);
-        }
-
-        var tokens = await LoadTokensAsync(cancellationToken);
-        return new RequestAuthentication(tokens?.AccessToken, tokens?.RefreshToken);
+        return new RequestAuthentication(
+            await deviceAccessTokenProvider.GetAccessTokenAsync(cancellationToken: cancellationToken));
     }
 
     private async Task<RequestReplay> ResolveReplayAsync(
         HttpStatusCode statusCode,
         bool authenticated,
         bool replaySafe,
-        RequestAuthentication authentication,
         CancellationToken cancellationToken)
     {
         if (statusCode != HttpStatusCode.Unauthorized || !authenticated || !replaySafe)
@@ -295,27 +231,13 @@ internal sealed class ApiHttpClient
             return default;
         }
 
-        if (deviceAccessTokenProvider is not null)
-        {
-            return new RequestReplay(
-                true,
-                await deviceAccessTokenProvider.GetAccessTokenAsync(
-                    forceRefresh: true,
-                    cancellationToken: cancellationToken));
-        }
-
-        if (string.IsNullOrWhiteSpace(authentication.RefreshToken))
-        {
-            return default;
-        }
-
-        var refreshed = await RefreshTokensAsync(authentication.RefreshToken, cancellationToken);
-        return new RequestReplay(true, refreshed.AccessToken);
+        return new RequestReplay(
+            true,
+            await deviceAccessTokenProvider.GetAccessTokenAsync(
+                forceRefresh: true,
+                cancellationToken: cancellationToken));
     }
 
-    private ITokenStore RequireTokenStore() =>
-        tokenStore ?? throw new InvalidOperationException("This API client does not use legacy identity tokens.");
-
-    private readonly record struct RequestAuthentication(string? AccessToken, string? RefreshToken);
+    private readonly record struct RequestAuthentication(string? AccessToken);
     private readonly record struct RequestReplay(bool ShouldReplay, string? AccessToken);
 }
