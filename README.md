@@ -8,7 +8,7 @@ Installing, configuring, and running the Windows Publisher must not require admi
 
 ## Current status
 
-This repository contains the .NET 10 publisher: a cross-platform **Avalonia** desktop shell (Windows today, Linux later — issue #32), typed backend HTTP clients, the authenticated WebSocket signaling client, WASAPI loopback capture, and WebRTC/Opus publishing.
+This repository contains the .NET 10 publisher: a cross-platform **Avalonia** desktop shell (Windows today, Linux later — issue #32), device-identity HTTP clients, secure QR pairing, WASAPI loopback capture, WebRTC/Opus publishing, and DeviceBearer WebSocket signaling.
 
 ## Prerequisites
 
@@ -55,30 +55,38 @@ Open the repository's [Releases page](https://github.com/vitorhugo-java/windows_
 
 Before approving a release, run the [non-admin release smoke test](docs/release-smoke-test.md) from a clean standard-user environment. Every mandatory item is a release gate.
 
-## User configuration and tokens
+## User configuration and device identity
 
 On first launch, the publisher creates editable configuration at `%LOCALAPPDATA%\SonicRelay\WindowsPublisher\appsettings.json`. Backend and signaling addresses must be absolute HTTP(S) or WebSocket URLs, and `defaultMaxViewers` must be greater than zero.
 
-Authentication tokens are stored for the current user at `%LOCALAPPDATA%\SonicRelay\WindowsPublisher\tokens.dat` and protected with Windows DPAPI `CurrentUser`. If DPAPI is unavailable, token operations return a secure-storage error and no plaintext fallback is written. Neither configuration nor token storage requires administrator privileges.
+No account login is required. On first launch the app bootstraps a `windows_publisher/windows` device and stores its credential at `%LOCALAPPDATA%\SonicRelay\WindowsPublisher\device-credential.dat`, protected with Windows DPAPI `CurrentUser`. Short-lived DeviceBearer tokens remain in memory. If DPAPI is unavailable, startup reports a secure-storage error and no plaintext fallback is written.
+
+Deleting `device-credential.dat`, clearing the app's local data, or moving the file to another Windows user resets this installation's identity. The next launch creates a new publisher device; existing pairings belong to the previous device and must be created again. Neither configuration nor credential storage requires administrator privileges.
 
 ## Backend HTTP client
 
-The configured `backendBaseUrl` is used as the `HttpClient.BaseAddress`; no production address is compiled into the application. The typed clients implement login and refresh under `/auth`, current-user lookup, `windows_publisher` device registration/listing, and stream-session creation/active-list/end operations.
+The configured `backendBaseUrl` is used as the `HttpClient.BaseAddress`; no production address is compiled into the application. The typed clients bootstrap the publisher under `/api/devices/bootstrap`, exchange its protected credential under `/api/devices/token`, and implement pairing plus stream-session operations. The production composition does not call account login, registration, current-user, or Identity refresh endpoints.
 
-Authenticated requests load the current user's DPAPI-protected bearer token. A `401` with an available refresh token causes one refresh request and one retry, and the replacement tokens are saved back to the user-scoped store. HTTP, network, and backend failures are exposed as typed API errors. This layer uses outbound HTTP(S) only and requires no administrator privileges.
+Authenticated requests obtain a short-lived DeviceBearer token from one shared device-identity session. Safe reads may perform one forced token exchange and retry after `401`; side-effecting POST/DELETE requests are not replayed automatically. HTTP, network, secure-storage, and backend failures are exposed as typed API errors. This layer uses outbound HTTP(S) only and requires no administrator privileges.
+
+## Pair a viewer
+
+The Connection page creates a short-lived pairing challenge and shows both its manual code and the backend-provided payload as a QR code rendered only in memory. A viewer may scan the QR or enter the challenge identifier and pairing code manually. Refreshing or expiring a challenge clears its QR without changing streaming state, and revoking a pairing blocks future joins without disconnecting an already joined stream.
+
+The pairing code is not the session join code. After pairing, create a stream session and share the separately labeled session join code with the viewer. Neither QR payloads nor pairing/session codes are persisted.
 
 ## WebSocket signaling client
 
-The configured `signalingBaseUrl` is converted to WS(S) when needed and receives escaped `sessionId` and `deviceId` query parameters. The outbound handshake uses the current user-scoped bearer token. On connection the client sends `publisher.ready`, validates and dispatches supported control envelopes, answers `ping` with `pong`, and exposes connection/reconnection state.
+The configured `signalingBaseUrl` is converted to WS(S) when needed and receives only the escaped `sessionId` query parameter. Every outbound connection or reconnection resolves a current DeviceBearer token. On connection the client sends `publisher.ready`, validates and dispatches supported control envelopes, answers `ping` with `pong`, and exposes connection/reconnection state.
 
-Unexpected transport failures use a conservative 1/2/4-second reconnect sequence. Explicit closure, normal remote closure, cancellation, and `session.ended` close cleanly without reconnecting. Only one active connection is allowed for a session/device identity, while `viewerId` remains on each envelope for future per-viewer routing. SDP and ICE payloads are redacted from safe diagnostic output.
+Unexpected transport failures use a conservative 1/2/4-second reconnect sequence. Explicit closure, normal remote closure, cancellation, and `session.ended` close cleanly without reconnecting. Only one active connection is allowed for a session, while `viewerId` remains on each envelope for future per-viewer routing. SDP and ICE payloads are redacted from safe diagnostic output.
 
 The WebSocket carries signaling control messages only. It does not carry audio; future audio transport belongs to one WebRTC connection per viewer. The client initiates outbound connections only, opens no local server port, changes no firewall rule, and requires no administrator privileges.
 
 ## Planned milestones
 
 1. Repository and Windows application bootstrap.
-2. Backend authentication and publisher-device registration.
+2. Device bootstrap, DeviceBearer authentication, and secure viewer pairing.
 3. Stream session lifecycle and WebSocket signaling.
 4. WASAPI loopback capture and audio pipeline.
 5. WebRTC/Opus publication with one peer connection per viewer.

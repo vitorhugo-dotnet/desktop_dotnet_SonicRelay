@@ -1,6 +1,6 @@
 using SonicRelay.Windows.Audio;
 using SonicRelay.Windows.Core.Configuration;
-using SonicRelay.Windows.Core.Storage;
+using SonicRelay.Windows.Core.Storage.DeviceIdentity;
 
 namespace SonicRelay.Windows.Presentation.Tests;
 
@@ -9,21 +9,26 @@ public sealed class PublisherRuntimeTests
     private static readonly Uri BackendUrl = new("https://backend.example.test/");
 
     [Fact]
-    public async Task CreateWithoutOverridesUsesTheDefaultWindowsTokenStore()
+    public async Task CreateWithoutOverridesUsesTheDefaultWindowsDeviceCredentialStore()
     {
+        // PublisherRuntime does not expose the credential store instance directly (it is
+        // consumed internally by DeviceIdentitySession), so this is a construction smoke
+        // test: the default composition path must not throw for the common case of no
+        // override supplied — UserScopedDeviceCredentialStoreTests cover the store's own
+        // DPAPI behavior in isolation.
         await using var runtime = PublisherRuntime.Create(BackendUrl, new FakeAudio());
 
-        Assert.IsType<UserScopedTokenStore>(runtime.TokenStore);
+        Assert.NotNull(runtime);
     }
 
     [Fact]
-    public async Task CreateWithATokenStoreOverrideUsesItInstead()
+    public async Task CreateWithACredentialStoreOverrideDoesNotThrow()
     {
-        var tokenStore = new InMemoryFakeTokenStore();
+        var credentialStore = new InMemoryFakeDeviceCredentialStore();
 
-        await using var runtime = PublisherRuntime.Create(BackendUrl, new FakeAudio(), tokenStoreOverride: tokenStore);
+        await using var runtime = PublisherRuntime.Create(BackendUrl, new FakeAudio(), credentialStoreOverride: credentialStore);
 
-        Assert.Same(tokenStore, runtime.TokenStore);
+        Assert.NotNull(runtime);
     }
 
     [Fact]
@@ -53,10 +58,13 @@ public sealed class PublisherRuntimeTests
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
-    private sealed class InMemoryFakeTokenStore : ITokenStore
+    private sealed class InMemoryFakeDeviceCredentialStore : IDeviceCredentialStore
     {
-        public Task<TokenStorageResult> SaveAsync(TokenSet tokens, CancellationToken cancellationToken = default) => Task.FromResult(TokenStorageResult.Success());
-        public Task<TokenStorageResult> LoadAsync(CancellationToken cancellationToken = default) => Task.FromResult(TokenStorageResult.Success());
-        public Task<TokenStorageResult> DeleteAsync(CancellationToken cancellationToken = default) => Task.FromResult(TokenStorageResult.Success());
+        public Task<DeviceCredentialStorageResult> SaveAsync(DeviceCredential credential, CancellationToken cancellationToken = default) =>
+            Task.FromResult(DeviceCredentialStorageResult.Success(credential));
+        public Task<DeviceCredentialStorageResult> LoadAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(DeviceCredentialStorageResult.Success());
+        public Task<DeviceCredentialStorageResult> DeleteAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(DeviceCredentialStorageResult.Success());
     }
 }

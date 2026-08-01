@@ -1,10 +1,12 @@
-using SonicRelay.Windows.Core.Storage;
+using SonicRelay.Windows.Core.Authentication;
 
 namespace SonicRelay.Windows.ApiClient.Sessions;
 
-public sealed class SessionApiClient(HttpClient httpClient, ITokenStore tokenStore) : ISessionApiClient
+public sealed class SessionApiClient(
+    HttpClient httpClient,
+    IDeviceAccessTokenProvider accessTokenProvider) : ISessionApiClient
 {
-    private readonly ApiHttpClient _api = new(httpClient, tokenStore);
+    private readonly ApiHttpClient _api = new(httpClient, accessTokenProvider);
 
     public Task<StreamSessionResponse> CreateSessionAsync(
         CreateSessionRequest request,
@@ -18,7 +20,8 @@ public sealed class SessionApiClient(HttpClient httpClient, ITokenStore tokenSto
             "/api/sessions/active",
             null,
             true,
-            cancellationToken);
+            cancellationToken,
+            replaySafe: true);
 
     public Task<StreamSessionResponse> EndSessionAsync(
         Guid sessionId,

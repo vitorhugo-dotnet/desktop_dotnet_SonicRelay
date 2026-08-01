@@ -61,19 +61,23 @@ Runnable from the portable ZIP extraction **or** the installed location.
 - [ ] Confirm startup does not show an administrator prompt, request firewall rules, install a service, install drivers, or modify a protected machine location.
 - [ ] Confirm the main window opens and remains responsive.
 - [ ] Open Settings and confirm the current configuration is displayed.
-- [ ] Configure the backend URL with a valid absolute HTTP(S) test address, save it, close the app, reopen it, and confirm the value persists.
+- [ ] With the app closed, configure `backendBaseUrl` in `appsettings.json` with a valid absolute HTTP(S) test address, reopen the app, and confirm the value persists.
 - [ ] Confirm `%LOCALAPPDATA%\SonicRelay\WindowsPublisher\appsettings.json` is created or updated and no runtime data is written beside the executable or under Program Files.
 
-## Authentication and local state
+## Device identity, pairing, and local state
 
-- [ ] Enter test credentials and attempt login. Record success or the expected typed authentication/backend error; the app must remain responsive.
-- [ ] When credentials are accepted, confirm tokens are stored at `%LOCALAPPDATA%\SonicRelay\WindowsPublisher\tokens.dat` for the current user and are not readable as plaintext.
-- [ ] Use the application's reset/sign-out behavior to clear local tokens and configuration. If the current build exposes clearing through separate controls, exercise both and record them.
-- [ ] Confirm cleared token/config files are removed or reset only under `%LOCALAPPDATA%\SonicRelay\WindowsPublisher` and the app can start again.
+- [ ] Confirm startup requires no account login and bootstraps a `windows_publisher/windows` identity against the configured backend.
+- [ ] Confirm `%LOCALAPPDATA%\SonicRelay\WindowsPublisher\device-credential.dat` is created for the current user, is protected with DPAPI CurrentUser, and is not readable as plaintext.
+- [ ] Confirm DeviceBearer access tokens remain in memory: no access-token or refresh-token file is created.
+- [ ] Open Connection and create a pairing challenge. Confirm the pairing challenge ID and pairing code are both visible and can be copied independently.
+- [ ] Confirm the QR code scans to the backend-provided pairing payload, and complete pairing either by scanning it or by entering the same challenge ID plus pairing code manually in a viewer.
+- [ ] Create a stream session and confirm its separately labeled session join code is not replaced when the pairing challenge is refreshed or expires.
+- [ ] Close the app, delete only `device-credential.dat`, and reopen it to reset device identity. Confirm a new publisher identity is bootstrapped and previous pairings must be created again.
+- [ ] Confirm the reset and configuration files remain only under `%LOCALAPPDATA%\SonicRelay\WindowsPublisher` and the app can start again.
 
 ## Failure handling
 
-- [ ] Set the backend URL to an unused or unreachable address and attempt login. Confirm the missing backend produces a clear, non-fatal error without elevation, repeated modal prompts, or a crash.
+- [ ] Set the backend URL to an unused or unreachable address and start the app. Confirm the missing backend produces a clear, non-fatal device-bootstrap error without elevation, repeated modal prompts, or a crash.
 - [ ] Disable or disconnect available audio endpoints, then exercise the audio-device/publish path. Confirm a missing audio device produces a clear, non-fatal unavailable-device state without requesting a driver or elevation.
 - [ ] Restore the test environment and confirm the app can be closed normally with no SonicRelay process or service left running.
 

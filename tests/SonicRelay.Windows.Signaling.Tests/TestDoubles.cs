@@ -1,21 +1,8 @@
 using System.Net.WebSockets;
 using System.Threading.Channels;
-using SonicRelay.Windows.Core.Storage;
 using SonicRelay.Windows.Signaling.WebSockets;
 
 namespace SonicRelay.Windows.Signaling.Tests;
-
-internal sealed class MemoryTokenStore(TokenSet? tokens) : ITokenStore
-{
-    public Task<TokenStorageResult> SaveAsync(TokenSet value, CancellationToken cancellationToken = default) =>
-        Task.FromResult(TokenStorageResult.Success(value));
-
-    public Task<TokenStorageResult> LoadAsync(CancellationToken cancellationToken = default) =>
-        Task.FromResult(TokenStorageResult.Success(tokens));
-
-    public Task<TokenStorageResult> DeleteAsync(CancellationToken cancellationToken = default) =>
-        Task.FromResult(TokenStorageResult.Success());
-}
 
 internal sealed class RecordingHandler : ISignalingMessageHandler
 {

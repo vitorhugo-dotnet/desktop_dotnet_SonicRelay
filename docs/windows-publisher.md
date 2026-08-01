@@ -4,7 +4,7 @@
 
 The Windows Publisher will turn Windows system audio into a low-latency SonicRelay stream. It will be the publisher-side desktop client; playback clients and backend services live outside this repository.
 
-The application shell, user-scoped configuration/token storage, typed backend HTTP clients, signaling client, WASAPI loopback capture, and per-viewer WebRTC/Opus publication exist today. See the [WebRTC end-to-end test](webrtc-e2e-test.md) for the manual Windows-Publisher ↔ Flutter-viewer validation of offer/answer/ICE and audio playback.
+The application shell, user-scoped configuration/device-credential storage, typed backend HTTP clients, signaling client, WASAPI loopback capture, and per-viewer WebRTC/Opus publication exist today. See the [WebRTC end-to-end test](webrtc-e2e-test.md) for the manual Windows-Publisher ↔ Flutter-viewer validation of offer/answer/ICE and audio playback.
 
 ## System context
 
@@ -18,8 +18,9 @@ flowchart LR
 
 ## Planned responsibilities
 
-- Authenticate a user against the SonicRelay backend.
-- Register the current machine as a `windows_publisher` device.
+- Bootstrap the current machine as a `windows_publisher/windows` device.
+- Exchange its protected credential for short-lived DeviceBearer tokens.
+- Create pairing challenges and manage active viewer pairings.
 - Create and manage stream sessions.
 - Maintain a WebSocket connection for signaling events.
 - Capture system output with WASAPI loopback.
@@ -38,10 +39,12 @@ sequenceDiagram
     participant Viewer
 
     User->>Publisher: Start publishing
-    Publisher->>Backend: Authenticate and register device
+    Publisher->>Backend: Bootstrap device and obtain DeviceBearer
+    Publisher->>Backend: Create pairing challenge (QR or manual ID + code)
+    Viewer->>Backend: Complete device pairing
     Publisher->>Backend: Create stream session
     Publisher->>Backend: Connect signaling WebSocket
-    Viewer->>Backend: Join stream
+    Viewer->>Backend: Join with separate session join code
     Backend-->>Publisher: Viewer signaling request
     Publisher->>Publisher: Create peer connection for viewer
     Publisher-->>Viewer: Negotiate WebRTC through signaling
@@ -57,13 +60,15 @@ sequenceDiagram
 
 ## Implemented HTTP surface
 
-The Windows client follows the backend's documented routes: `/auth/login`, `/auth/refresh`, `/auth/me`, `/api/devices/`, `/api/sessions/`, `/api/sessions/active`, and `/api/sessions/{sessionId}/end`. Device registration fixes the backend-required pair `windows_publisher`/`windows`. The backend base URL always comes from user configuration.
+The production Windows client follows the device-first backend routes: `/api/devices/bootstrap`, `/api/devices/token`, `/api/pairings/challenges`, `/api/devices/{deviceId}/pairings`, `/api/pairings/{pairingId}`, `/api/sessions/`, `/api/sessions/active`, and `/api/sessions/{sessionId}/end`. Bootstrap fixes the backend-required pair `windows_publisher`/`windows`; there is no account-login fallback. The backend base URL always comes from user configuration.
 
-These clients attach the stored opaque bearer token, refresh and retry once after an unauthorized response when possible, and map authorization, validation, conflict, network, backend, and unknown failures into typed errors. They carry control-plane JSON only; no audio or WebSocket signaling passes through this layer.
+One shared `DeviceIdentitySession` supplies DeviceBearer tokens to HTTP, signaling, and TURN. Replay-safe reads may force one token exchange and retry after an unauthorized response; side-effecting requests are not automatically replayed. Session creation sends no client-selected device ID, and signaling connects or reconnects with `sessionId` only. Clients map authorization, validation, conflict, network, backend, and unknown failures into typed errors.
 
-### Persistent session
+### Persistent device identity and pairing
 
-The refresh token is persisted per user, DPAPI-protected, in `tokens.dat` under `%LocalAppData%\SonicRelay\WindowsPublisher` (`UserScopedTokenStore`); tokens are never written in plaintext or logged. On startup — and whenever the backend is (re)configured — `PublisherWorkflow.RestoreSessionAsync` calls `/auth/me` (which transparently refreshes an expired access token using the stored refresh token) and re-resolves this machine's `windows_publisher` device, so the user stays signed in across app restarts and reboots without re-entering credentials. An invalid/expired refresh token clears local auth and returns to the sign-in screen; a transient network error leaves the app signed out without an error banner so the user can retry. The publisher device is matched by hostname and reused, so restarts never create duplicate devices. Logout clears the stored tokens and resets the session/device cache.
+The device credential is persisted per Windows user, DPAPI `CurrentUser`-protected, in `device-credential.dat` under `%LocalAppData%\SonicRelay\WindowsPublisher`; its secret is never written in plaintext or logged. Short-lived DeviceBearer tokens exist only in memory. At startup, the client loads this credential or bootstraps a new publisher, then exchanges it for a token. Deleting the credential resets this installation to a new device identity, so pairings associated with the old publisher must be created again.
+
+The Connection page shows the pairing challenge ID and pairing code for manual entry, provides independent copy actions, and renders the exact backend QR payload in memory. Pairing challenges expire independently of streaming. After pairing, the publisher creates a session with a separately labeled session join code; refreshing or expiring the pairing challenge never changes that session code.
 
 ## WASAPI loopback capture
 
@@ -133,7 +138,7 @@ without a session.
 
 `PublisherRuntime.Create` wires a `BackendIceServersProvider`
 (`SonicRelay.Windows.ApiClient`) that fetches STUN/TURN servers — including
-short-lived TURN credentials — from the authenticated backend endpoint
+short-lived TURN credentials — from the DeviceBearer-authenticated backend endpoint
 `GET /api/webrtc/ice-servers`, which serves the SonicRelay coturn deployment.
 Results are cached until shortly before the TURN credentials expire. The
 public Google STUN server (`stun:stun1.google.com:19302`) is used only as a
@@ -227,15 +232,15 @@ the tray uses only user-level shell interop.
 
 The Windows Publisher must install, configure, and run as a standard Windows user without elevation. Its normal operation must not depend on an administrator-approved installer, Windows service, custom audio driver, kernel-mode component, machine-wide runtime, inbound firewall rule, HKLM configuration, or runtime writes to protected locations such as Program Files.
 
-Distribution should be unpackaged and self-contained, per-user, or portable where practical. Configuration, tokens, logs, and other mutable data must use user-scoped folders. API, signaling, WebRTC, TURN, and STUN traffic must be initiated outbound by the application; the publisher must not assume it can open an inbound port or modify firewall rules.
+Distribution should be unpackaged and self-contained, per-user, or portable where practical. Configuration, device credentials, logs, and other mutable data must use user-scoped folders. API, signaling, WebRTC, TURN, and STUN traffic must be initiated outbound by the application; the publisher must not assume it can open an inbound port or modify firewall rules.
 
 Dependencies that require elevation for normal usage are incompatible and must be rejected. Future implementation and release work must be reviewed against the [non-admin checklist](non-admin-checklist.md).
 
 ## Diagnostics and safe sharing
 
-The Diagnostics page shows the current backend, authentication, device, session, signaling, audio capture, and WebRTC status. Structured JSON Lines logs are stored per user in `%LocalAppData%\SonicRelay\WindowsPublisher\logs`; exported Markdown reports are stored in the adjacent `diagnostics` folder. Neither operation requires elevation or writes to Windows Event Log.
+The Diagnostics page shows the current backend, device identity, session, signaling, audio capture, and WebRTC status. Structured JSON Lines logs are stored per user in `%LocalAppData%\SonicRelay\WindowsPublisher\logs`; exported Markdown reports are stored in the adjacent `diagnostics` folder. Neither operation requires elevation or writes to Windows Event Log.
 
-Exported diagnostic reports are designed to be safe to attach to a support request: identifiers are masked, backend URLs contain only scheme/host/port, and credentials, tokens, passwords, email addresses, SDP bodies, and ICE candidates are redacted. Do not share `tokens.dat`, `appsettings.json`, raw signaling captures, memory dumps, or any manually collected SDP/ICE payload even when sharing an exported report.
+Exported diagnostic reports are designed to be safe to attach to a support request: identifiers are masked, backend URLs contain only scheme/host/port, and credentials, tokens, codes, SDP bodies, and ICE candidates are redacted. Do not share `device-credential.dat`, `appsettings.json`, raw signaling captures, memory dumps, or any manually collected SDP/ICE payload even when sharing an exported report.
 
 ## Current deliverable
 

@@ -7,7 +7,7 @@ public interface ISignalingClient : IAsyncDisposable
     event Action<int>? ReconnectAttempting;
     event Action<SignalingCloseReason>? Closed;
 
-    Task ConnectAsync(string sessionId, string deviceId, CancellationToken cancellationToken = default);
+    Task ConnectAsync(string sessionId, CancellationToken cancellationToken = default);
     Task SendAsync(SignalingMessageEnvelope message, CancellationToken cancellationToken = default);
     Task CloseAsync(CancellationToken cancellationToken = default);
 }

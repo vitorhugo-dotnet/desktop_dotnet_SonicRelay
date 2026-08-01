@@ -313,7 +313,7 @@ public sealed class WebRtcPublisherTests
         public event Action<SignalingConnectionState>? StateChanged { add { } remove { } }
         public event Action<int>? ReconnectAttempting { add { } remove { } }
         public event Action<SignalingCloseReason>? Closed { add { } remove { } }
-        public Task ConnectAsync(string sessionId, string deviceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task ConnectAsync(string sessionId, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task CloseAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task SendAsync(SignalingMessageEnvelope message, CancellationToken cancellationToken = default)
         {

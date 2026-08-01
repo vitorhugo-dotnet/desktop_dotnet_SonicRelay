@@ -6,30 +6,31 @@ using SonicRelay.Windows.Signaling;
 namespace SonicRelay.Windows.Desktop.Tests;
 
 /// <summary>
-/// The shell chooses the sign-in surface vs. the dashboard from the snapshot, so a successful
-/// sign-in flips it to the dashboard automatically (#32).
+/// The shell chooses the pairing surface vs. the dashboard from the snapshot, so a successful
+/// device-identity bootstrap flips it to the dashboard automatically (issue #26, formerly #32's
+/// sign-in surface).
 /// </summary>
 public sealed class MainWindowViewModelStateTests
 {
     [Fact]
-    public void Show_login_without_an_authenticated_snapshot()
+    public void Show_pairing_without_a_device_identity_snapshot()
     {
-        Assert.True(MainWindowViewModel.ShouldShowLogin(null));
-        Assert.True(MainWindowViewModel.ShouldShowLogin(new PublisherSnapshot { IsAuthenticated = false }));
+        Assert.True(MainWindowViewModel.ShouldShowPairing(null));
+        Assert.True(MainWindowViewModel.ShouldShowPairing(new PublisherSnapshot { IsAuthenticated = false }));
     }
 
     [Fact]
-    public void Hide_login_once_authenticated()
+    public void Hide_pairing_once_the_device_identity_is_ready()
     {
-        Assert.False(MainWindowViewModel.ShouldShowLogin(new PublisherSnapshot { IsAuthenticated = true }));
+        Assert.False(MainWindowViewModel.ShouldShowPairing(new PublisherSnapshot { IsAuthenticated = true }));
     }
 
     [Fact]
-    public void Fresh_view_model_opens_on_the_login_surface()
+    public void Fresh_view_model_opens_on_the_pairing_surface()
     {
         var vm = new MainWindowViewModel();
 
-        Assert.True(vm.ShowLogin);
+        Assert.True(vm.ShowPairing);
     }
 
     [Fact]
@@ -37,8 +38,41 @@ public sealed class MainWindowViewModelStateTests
     {
         var vm = MainWindowViewModel.CreatePreview();
 
-        Assert.False(vm.ShowLogin);
-        Assert.False(vm.Auth.HasError);
+        Assert.False(vm.ShowPairing);
+    }
+
+    [Fact]
+    public async Task Attaching_a_runtime_before_bootstrap_still_shows_pairing_with_no_pairing_view_model_yet()
+    {
+        // PublisherRuntime only creates its PairingViewModel once device-identity bootstrap
+        // succeeds (PublisherRuntime.InitializeDeviceIdentityAsync); attaching a freshly
+        // created runtime (bootstrap not yet run) must still show the pairing surface with a
+        // null Pairing view model, not the dashboard and not a crash (issue #26).
+        await using var runtime = PublisherRuntime.Create(
+            new Uri("https://backend.example.test/"), new FakeAudio());
+        var vm = new MainWindowViewModel();
+
+        vm.Attach(runtime);
+
+        Assert.True(vm.ShowPairing);
+        Assert.Null(vm.Pairing);
+    }
+
+    private sealed class FakeAudio : IAudioCaptureService
+    {
+        public AudioCaptureState State => AudioCaptureState.Stopped;
+        public AudioCaptureDiagnostics Diagnostics { get; } = new(AudioCaptureState.Stopped, null, null, AudioLevelSnapshot.Silence, 0, 0);
+        public string? PreferredDeviceId => null;
+        public event Action<AudioCaptureState>? StateChanged;
+        public event Action<AudioFrame>? FrameCaptured;
+        public event Action<AudioLevelSnapshot>? LevelChanged;
+        public IReadOnlyList<AudioOutputDevice> GetOutputDevices() => [];
+        public void SelectOutputDevice(string? deviceId) { }
+        public Task StartAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task StopAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task PauseAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task ResumeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     [Fact]

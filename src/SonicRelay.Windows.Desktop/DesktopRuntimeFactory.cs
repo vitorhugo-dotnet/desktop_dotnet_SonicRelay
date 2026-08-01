@@ -1,19 +1,21 @@
 using System.Runtime.Versioning;
 using SonicRelay.Platform.Linux.Audio;
-using SonicRelay.Platform.Linux.Storage;
 using SonicRelay.Windows.Audio;
 using SonicRelay.Windows.Core.Configuration;
-using SonicRelay.Windows.Core.Storage;
 using SonicRelay.Windows.Presentation;
 
 namespace SonicRelay.Windows.Desktop;
 
 /// <summary>
 /// Platform composition root for the publisher runtime (issue #32): Windows
-/// composes WASAPI capture with DPAPI token storage (unchanged); Linux composes
-/// the PipeWire adapter with Secret Service token storage (falling back to an
-/// in-memory store when Secret Service is unavailable). Any other platform is an
-/// explicit unsupported state, not a silent preview.
+/// composes WASAPI capture with the default DPAPI-backed device-credential
+/// store (unchanged); Linux composes the PipeWire adapter and, for now, the
+/// same default store — DPAPI is unavailable outside Windows, so device
+/// identity bootstrap on Linux currently reports secure storage as
+/// unavailable rather than persisting silently insecurely (see issue #26
+/// follow-up: a Secret Service-backed IDeviceCredentialStore for Linux is not
+/// yet implemented). Any other platform is an explicit unsupported state, not
+/// a silent preview.
 /// </summary>
 public static class DesktopRuntimeFactory
 {
@@ -48,10 +50,6 @@ public static class DesktopRuntimeFactory
         var backend = new PipeWireProcessBackend(processRunner, commandPaths, resolver, () => audioOutputPreference.SelectedDeviceId);
         var audioCapture = AudioCaptureService.Create(backend, probe);
 
-        ITokenStore tokenStore = commandPaths.SecretTool is { } secretToolPath
-            ? new SecretServiceTokenStore(processRunner, secretToolPath)
-            : new InMemoryTokenStore();
-
-        return PublisherRuntime.Create(backendBaseUrl, audioCapture, tokenStore, audioOutputPreference);
+        return PublisherRuntime.Create(backendBaseUrl, audioCapture, audioOutputPreferenceOverride: audioOutputPreference);
     }
 }

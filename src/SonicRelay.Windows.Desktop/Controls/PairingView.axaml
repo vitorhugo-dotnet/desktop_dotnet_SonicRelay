@@ -1,0 +1,67 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="SonicRelay.Windows.Desktop.Controls.PairingView">
+  <Border Background="{DynamicResource Sonic.AppBackgroundBrush}">
+    <Border Classes="card" Width="560" MaxWidth="560"
+            VerticalAlignment="Center" HorizontalAlignment="Center">
+      <StackPanel Spacing="16">
+        <StackPanel Spacing="4">
+          <TextBlock Classes="card-title" Text="Pair a viewer" />
+          <TextBlock Classes="metric-label" TextWrapping="Wrap"
+                     Text="Scan this short-lived QR code from the SonicRelay viewer, or enter the pairing code manually." />
+        </StackPanel>
+
+        <TextBlock x:Name="DeviceStatusText" Classes="metric-label"
+                   Text="Publisher device identity unavailable" />
+
+        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="20">
+          <Border Grid.Column="0" Width="184" Height="184" Background="White"
+                  CornerRadius="{StaticResource Sonic.RadiusSm}" Padding="8">
+            <Image x:Name="QrImage" Stretch="Uniform" />
+          </Border>
+
+          <StackPanel Grid.Column="1" Spacing="8" VerticalAlignment="Center">
+            <TextBlock Classes="metric-label" Text="Pairing code" />
+            <TextBlock x:Name="PairingCodeText" Text="—"
+                       FontSize="{StaticResource Sonic.FontSizeHeadline}" FontWeight="Bold"
+                       Classes="mono" Foreground="{DynamicResource Sonic.AccentTealBrush}" />
+            <Button x:Name="CopyPairingCodeButton" Content="Copy pairing code" Classes="ghost"
+                    Click="CopyPairingCode_Click" IsEnabled="False" HorizontalAlignment="Left" />
+
+            <TextBlock Classes="metric-label" Text="Pairing challenge ID" Margin="0,8,0,0" />
+            <TextBlock x:Name="PairingChallengeIdText" Text="—" TextWrapping="Wrap"
+                       Classes="mono" FontSize="{StaticResource Sonic.FontSizeLabel}" />
+            <Button x:Name="CopyChallengeIdButton" Content="Copy challenge ID" Classes="ghost"
+                    Click="CopyChallengeId_Click" IsEnabled="False" HorizontalAlignment="Left" />
+
+            <TextBlock x:Name="PairingExpiryText" Classes="metric-label" TextWrapping="Wrap"
+                       Text="Create a pairing code to begin." />
+
+            <TextBlock Classes="metric-label" Text="Session join code" Margin="0,8,0,0" />
+            <TextBlock x:Name="SessionCodeText" Text="—"
+                       FontSize="{StaticResource Sonic.FontSizeTitle}" FontWeight="SemiBold"
+                       Classes="mono" />
+          </StackPanel>
+        </Grid>
+
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <Button x:Name="RefreshChallengeButton" Content="Create pairing code"
+                  Click="RefreshChallenge_Click" IsEnabled="False" />
+          <Button x:Name="RefreshPairingsButton" Content="Refresh paired viewers" Classes="ghost"
+                  Click="RefreshPairings_Click" IsEnabled="False" />
+          <TextBlock x:Name="BusyText" Classes="metric-label" Text="Working…" IsVisible="False"
+                     VerticalAlignment="Center" />
+        </StackPanel>
+
+        <TextBlock x:Name="ErrorText" Foreground="{DynamicResource Sonic.DangerBrush}"
+                   FontSize="{StaticResource Sonic.FontSizeLabel}" TextWrapping="Wrap"
+                   IsVisible="False" />
+
+        <TextBlock Classes="card-title" Text="Paired viewers" FontSize="{StaticResource Sonic.FontSizeBody}" />
+        <StackPanel x:Name="PairingsPanel" Spacing="8">
+          <TextBlock Classes="metric-label" Text="No active paired viewers." />
+        </StackPanel>
+      </StackPanel>
+    </Border>
+  </Border>
+</UserControl>

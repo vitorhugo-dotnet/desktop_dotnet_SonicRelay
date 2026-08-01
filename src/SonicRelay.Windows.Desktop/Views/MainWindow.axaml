@@ -11,12 +11,13 @@
         Background="{DynamicResource Sonic.AppBackgroundBrush}">
 
   <Panel>
-    <!-- Sign-in surface, shown until an authenticated session exists. DataContext is the
-         AuthViewModel, so ShowLogin is read from the window's root view model explicitly. -->
-    <controls:LoginView DataContext="{Binding Auth}"
-                        IsVisible="{Binding ((vm:MainWindowViewModel)DataContext).ShowLogin, ElementName=RootWindow}" />
+    <!-- Pairing surface, shown until this device's identity has bootstrapped (issue #26).
+         DataContext is the PairingViewModel, so ShowPairing is read from the window's root
+         view model explicitly. -->
+    <controls:PairingView DataContext="{Binding Pairing}"
+                          IsVisible="{Binding ((vm:MainWindowViewModel)DataContext).ShowPairing, ElementName=RootWindow}" />
 
-    <Grid ColumnDefinitions="Auto,*" IsVisible="{Binding !ShowLogin}">
+    <Grid ColumnDefinitions="Auto,*" IsVisible="{Binding !ShowPairing}">
     <!-- Left navigation rail -->
     <controls:SidebarNavigation Grid.Column="0" Width="232" />
 
@@ -37,8 +38,7 @@
             <TextBlock Text="{Binding PageSubtitle}" Classes="metric-label" />
           </StackPanel>
           <controls:AccountStatusHeader Grid.Column="1"
-                                        DataContext="{Binding Shell}"
-                                        SignOutCommand="{Binding DataContext.LogoutCommand, ElementName=RootWindow}" />
+                                        DataContext="{Binding Shell}" />
         </Grid>
       </Border>
 

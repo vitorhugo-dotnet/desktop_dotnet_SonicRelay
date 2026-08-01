@@ -58,16 +58,14 @@ public sealed class ShellCommandAvailabilityTests
         Assert.False(ShellCommandAvailability.StopAudio(snapshot, hasWorkflow: false));
         Assert.False(ShellCommandAvailability.EndSession(snapshot, hasWorkflow: false));
         Assert.False(ShellCommandAvailability.Retry(snapshot, capabilities, hasWorkflow: false));
-        Assert.False(ShellCommandAvailability.Logout(snapshot, capabilities, hasWorkflow: false));
     }
 
     [Fact]
-    public void Busy_snapshot_blocks_retry_and_logout()
+    public void Busy_snapshot_blocks_retry()
     {
         var busy = CapturingWithoutViewer with { IsBusy = true };
         var capabilities = PublisherUiCapabilities.For(PublisherUiState.Reconnecting);
 
         Assert.False(ShellCommandAvailability.Retry(busy, capabilities, hasWorkflow: true));
-        Assert.False(ShellCommandAvailability.Logout(busy, capabilities, hasWorkflow: true));
     }
 }

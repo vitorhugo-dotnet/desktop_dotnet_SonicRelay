@@ -8,14 +8,15 @@ public sealed class TrayApplicationControllerTests
 {
     private static TrayApplicationController Controller(bool keepInTray) => new(() => keepInTray);
 
-    private static PublisherSnapshot SignedIn => new()
+    private static PublisherSnapshot DeviceReady => new()
     {
         IsAuthenticated = true,
+        DeviceId = Guid.Parse("00000000-0000-0000-0000-000000000601"),
         SignalingState = SignalingConnectionState.Connected,
         AudioState = AudioCaptureState.Stopped,
     };
 
-    private static PublisherSnapshot Streaming => SignedIn with
+    private static PublisherSnapshot Streaming => DeviceReady with
     {
         SessionId = Guid.NewGuid(),
         SessionCode = "ABC123",
@@ -32,7 +33,7 @@ public sealed class TrayApplicationControllerTests
     [Fact]
     public void Close_quits_when_off_and_no_stream()
     {
-        Assert.Equal(TrayCloseDecision.Quit, Controller(false).DecideOnClose(SignedIn));
+        Assert.Equal(TrayCloseDecision.Quit, Controller(false).DecideOnClose(DeviceReady));
     }
 
     [Fact]
@@ -89,7 +90,7 @@ public sealed class TrayApplicationControllerTests
     [Fact]
     public void Start_stream_is_enabled_only_when_startable()
     {
-        var ready = SignedIn with { SessionId = Guid.NewGuid() };
+        var ready = DeviceReady with { SessionId = Guid.NewGuid() };
 
         var menu = Controller(true).BuildMenu(ready);
 
@@ -100,8 +101,9 @@ public sealed class TrayApplicationControllerTests
     public void Tooltip_reflects_the_publisher_state()
     {
         Assert.Contains("backend not configured", Controller(true).TooltipFor(null));
-        Assert.Contains("sign in required", Controller(true).TooltipFor(new PublisherSnapshot()));
-        Assert.Contains("signed in", Controller(true).TooltipFor(SignedIn));
+        Assert.Contains("device identity unavailable", Controller(true).TooltipFor(new PublisherSnapshot()));
+        Assert.Contains("device identity ready", Controller(true).TooltipFor(DeviceReady));
+        Assert.DoesNotContain("sign", Controller(true).TooltipFor(DeviceReady), StringComparison.OrdinalIgnoreCase);
         Assert.Contains("streaming", Controller(true).TooltipFor(Streaming));
     }
 
@@ -109,7 +111,7 @@ public sealed class TrayApplicationControllerTests
     public void DiffNotice_reports_stream_start_and_stop()
     {
         var controller = Controller(true);
-        Assert.Equal("Streaming started.", controller.DiffNotice(SignedIn, Streaming)?.Message);
+        Assert.Equal("Streaming started.", controller.DiffNotice(DeviceReady, Streaming)?.Message);
         Assert.Equal("Streaming stopped.", controller.DiffNotice(Streaming, Streaming with { AudioState = AudioCaptureState.Stopped })?.Message);
     }
 

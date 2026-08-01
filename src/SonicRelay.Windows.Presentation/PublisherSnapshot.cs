@@ -20,7 +20,8 @@ public sealed record PublisherSnapshot
     public string? ErrorMessage { get; init; }
     public IReadOnlyList<string> ActivityLog { get; init; } = [];
 
-    public bool CanCreateSession => IsAuthenticated && DeviceId.HasValue && SessionId is null && !IsBusy;
+    public bool HasDeviceIdentity => IsAuthenticated && DeviceId.HasValue;
+    public bool CanCreateSession => HasDeviceIdentity && SessionId is null && !IsBusy;
     public bool CanStartAudio => SessionId.HasValue && SignalingState == SignalingConnectionState.Connected
         && AudioState is AudioCaptureState.Stopped or AudioCaptureState.Faulted && !IsBusy;
     public bool CanStopAudio => AudioState is AudioCaptureState.Capturing or AudioCaptureState.Paused

@@ -1,11 +1,37 @@
 using SonicRelay.Windows.ApiClient.Errors;
 using SonicRelay.Windows.ApiClient.WebRtc;
+using SonicRelay.Windows.Core.Authentication;
 using SonicRelay.Windows.WebRtc;
 
 namespace SonicRelay.Windows.ApiClient.Tests;
 
 public sealed class BackendIceServersProviderTests
 {
+    [Fact]
+    public async Task EachBackendTurnRequestResolvesACurrentDeviceBearer()
+    {
+        var time = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        var tokens = new SequenceAccessTokenProvider("token-1", "token-2");
+        var bearerTokens = new List<string?>();
+        var handler = new FakeHttpMessageHandler((request, _) =>
+        {
+            bearerTokens.Add(request.Headers.Authorization?.Parameter);
+            return Task.FromResult(FakeHttpMessageHandler.Json(
+                System.Net.HttpStatusCode.OK,
+                """{"iceServers":[{"urls":["turn:relay:3478"],"username":"u","credential":"c"}],"iceTransportPolicy":"all","expiresAt":"1970-01-01T00:02:00Z"}"""));
+        });
+        var provider = new BackendIceServersProvider(
+            new WebRtcApiClient(TestClient.Create(handler), tokens),
+            time);
+
+        await provider.GetIceServersAsync();
+        time.Advance(TimeSpan.FromSeconds(61));
+        await provider.GetIceServersAsync();
+
+        Assert.Equal(["token-1", "token-2"], bearerTokens);
+        Assert.Equal([false, false], tokens.ForceRefreshCalls);
+    }
+
     [Fact]
     public async Task Maps_backend_response_to_ice_servers()
     {
@@ -132,5 +158,19 @@ public sealed class BackendIceServersProviderTests
         private DateTimeOffset now = start;
         public override DateTimeOffset GetUtcNow() => now;
         public void Advance(TimeSpan by) => now = now.Add(by);
+    }
+
+    private sealed class SequenceAccessTokenProvider(params string[] tokens) : IDeviceAccessTokenProvider
+    {
+        private readonly Queue<string> tokens = new(tokens);
+        public List<bool> ForceRefreshCalls { get; } = [];
+
+        public Task<string> GetAccessTokenAsync(
+            bool forceRefresh = false,
+            CancellationToken cancellationToken = default)
+        {
+            ForceRefreshCalls.Add(forceRefresh);
+            return Task.FromResult(tokens.Count > 1 ? tokens.Dequeue() : tokens.Peek());
+        }
     }
 }

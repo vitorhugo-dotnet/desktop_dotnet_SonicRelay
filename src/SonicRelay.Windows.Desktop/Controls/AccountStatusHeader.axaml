@@ -31,10 +31,5 @@
       <TextBlock Text="{Binding UiStateText}"
                  Classes="metric-label" />
     </StackPanel>
-
-    <Button Classes="ghost" Content="Sign out"
-            VerticalAlignment="Center"
-            Command="{Binding SignOutCommand, ElementName=Root}"
-            ToolTip.Tip="Sign out of this publisher" />
   </StackPanel>
 </UserControl>

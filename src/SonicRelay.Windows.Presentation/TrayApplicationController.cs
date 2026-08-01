@@ -37,8 +37,8 @@ public sealed class TrayApplicationController(Func<bool> keepRunningInTray)
     public string TooltipFor(PublisherSnapshot? state)
     {
         if (state is null) return "SonicRelay — backend not configured";
-        if (!state.IsAuthenticated) return "SonicRelay — sign in required";
-        if (state.SessionId is null) return "SonicRelay — signed in";
+        if (!state.HasDeviceIdentity) return "SonicRelay — device identity unavailable";
+        if (state.SessionId is null) return "SonicRelay — device identity ready";
         return state.AudioState is AudioCaptureState.Capturing
             ? $"SonicRelay — streaming · {state.ViewerCount} viewer(s)"
             : $"SonicRelay — session {state.SessionCode ?? "ready"}";

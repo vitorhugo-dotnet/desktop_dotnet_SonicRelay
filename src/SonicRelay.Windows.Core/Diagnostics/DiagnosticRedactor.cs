@@ -34,10 +34,10 @@ public static partial class DiagnosticRedactor
 
     public static bool IsSensitiveKey(string key) => SensitiveKey().IsMatch(key);
 
-    [GeneratedRegex(@"(?i)\b(password|access[_-]?token|refresh[_-]?token|token|code)\s*=\s*[^\s&]+")]
+    [GeneratedRegex(@"(?i)(?<![a-z0-9_-])(password|access[_-]?token|refresh[_-]?token|token|credential[_-]?secret|qr[_-]?payload|pairing[_-]?code|session[_-]?code|code)\s*=\s*[^\s&]+")]
     private static partial Regex SensitiveAssignment();
 
-    [GeneratedRegex(@"(?i)^(password|access[_-]?token|refresh[_-]?token|token|authorization|sdp|ice[_-]?candidate)$")]
+    [GeneratedRegex(@"(?i)^(password|access[_-]?token|refresh[_-]?token|token|authorization|credential[_-]?secret|qr[_-]?payload|pairing[_-]?code|session[_-]?code|code|sdp|ice[_-]?candidate)$")]
     private static partial Regex SensitiveKey();
 
     [GeneratedRegex(@"(?i)\bbearer\s+[^\s,;]+")]
