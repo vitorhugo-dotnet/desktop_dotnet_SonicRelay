@@ -116,6 +116,11 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: write
+    outputs:
+      tag_name: ${{ steps.metadata.outputs.tag_name }}
+      display_version: ${{ steps.metadata.outputs.display_version }}
+      asset_version: ${{ steps.metadata.outputs.asset_version }}
+      is_prerelease: ${{ steps.metadata.outputs.is_prerelease }}
 
     steps:
       - name: Check out repository
@@ -294,3 +299,82 @@ jobs:
           }
 
           gh @args
+
+  package-release-linux:
+    name: Package Linux release assets
+    needs: package-release
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore Linux x64 publish dependencies
+        run: dotnet restore $APP_PROJECT_PATH --runtime linux-x64
+
+      - name: Publish self-contained Linux x64 app
+        run: >-
+          dotnet publish $APP_PROJECT_PATH
+          --configuration $CONFIGURATION --runtime linux-x64 --self-contained true --no-restore
+          --output artifacts/publish/linux-x64
+
+      - name: Install fpm
+        run: sudo gem install --no-document fpm
+
+      - name: Install appimagetool
+        run: |
+          curl -fsSL -o /usr/local/bin/appimagetool \
+            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /usr/local/bin/appimagetool
+
+      - name: Build tar.gz, deb, rpm, and AppImage packages
+        run: >-
+          packaging/linux/build-packages.sh
+          artifacts/publish/linux-x64
+          '${{ needs.package-release.outputs.display_version }}'
+          '${{ github.sha }}'
+          artifacts/release
+
+      - name: Upload packaged assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-release-assets-${{ needs.package-release.outputs.asset_version }}
+          path: artifacts/release/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Extend the release's checksums and notes with the Linux assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.package-release.outputs.tag_name }}
+          RELEASE_VERSION: ${{ needs.package-release.outputs.display_version }}
+        run: |
+          set -euo pipefail
+          distDir=artifacts/release
+
+          # Merge into the Windows job's checksums-sha256.txt so there is one canonical
+          # checksums file per release, covering every platform's assets.
+          gh release download "$RELEASE_TAG" --pattern checksums-sha256.txt --dir "$distDir" --clobber
+          ( cd "$distDir" && sha256sum SonicRelay-LinuxPublisher-*.tar.gz SonicRelay-LinuxPublisher-*.deb SonicRelay-LinuxPublisher-*.rpm SonicRelay-LinuxPublisher-*.AppImage >> checksums-sha256.txt )
+
+          currentNotes=$(gh release view "$RELEASE_TAG" --json body --jq .body)
+          linuxNotes=$(printf '\n\n## Linux assets\n\n- `SonicRelay-LinuxPublisher-linux-x64-%s.tar.gz`: portable self-contained folder archive.\n- `SonicRelay-LinuxPublisher-linux-x64-%s.deb`: Debian/Ubuntu package (officially Ubuntu 24.04).\n- `SonicRelay-LinuxPublisher-linux-x64-%s.rpm`: Fedora package (best effort).\n- `SonicRelay-LinuxPublisher-linux-x64-%s.AppImage`: portable single-file app for any x64 glibc-based distribution.\n\nSee `docs/linux-publisher.md` for installation, dependencies, and known limitations.\n' "$RELEASE_VERSION" "$RELEASE_VERSION" "$RELEASE_VERSION" "$RELEASE_VERSION")
+
+          gh release edit "$RELEASE_TAG" --notes "${currentNotes}${linuxNotes}"
+
+          gh release upload "$RELEASE_TAG" \
+            "$distDir"/SonicRelay-LinuxPublisher-*.tar.gz \
+            "$distDir"/SonicRelay-LinuxPublisher-*.deb \
+            "$distDir"/SonicRelay-LinuxPublisher-*.rpm \
+            "$distDir"/SonicRelay-LinuxPublisher-*.AppImage \
+            "$distDir/checksums-sha256.txt" \
+            --clobber
