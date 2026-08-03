@@ -89,7 +89,6 @@ common_args=(
     --after-install "$repo_root/packaging/linux/after-install.sh"
     --after-remove "$repo_root/packaging/linux/after-remove.sh"
     --chdir "$staging_dir"
-    usr
 )
 
 # ---- .deb (Ubuntu 24.04 / Debian) --------------------------------------------
@@ -103,7 +102,8 @@ fpm --output-type deb \
     --depends libgssapi-krb5-2 --depends libicu74 --depends libssl3t64 \
     --depends libstdc++6 --depends tzdata --depends zlib1g \
     --depends libfontconfig1 --depends libx11-6 \
-    --package "$debPath"
+    --package "$debPath" \
+    usr
 echo "Wrote $debPath"
 
 # ---- .rpm (Fedora, best effort) ------------------------------------------------
@@ -117,7 +117,8 @@ fpm --output-type rpm \
     --depends openssl-libs --depends libstdc++ --depends libicu \
     --depends tzdata --depends krb5-libs --depends zlib \
     --depends fontconfig --depends libX11 \
-    --package "$rpmPath"
+    --package "$rpmPath" \
+    usr
 echo "Wrote $rpmPath"
 
 # ---- .AppImage (portable, any x64 glibc distribution) ------------------------
