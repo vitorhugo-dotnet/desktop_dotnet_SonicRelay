@@ -44,7 +44,17 @@ public partial class PairingView : UserControl
         }
 
         viewModel = value;
-        if (isLoaded && viewModel is not null)
+        if (!isLoaded)
+        {
+            // The named XAML elements Render() touches are only guaranteed to exist once
+            // this control has actually loaded — production crashed here with a
+            // NullReferenceException on DeviceStatusText because device-identity bootstrap
+            // can attach a real PairingViewModel before the shell's first layout pass
+            // completes. OnLoaded picks up the pending viewModel and renders once it's safe.
+            return;
+        }
+
+        if (viewModel is not null)
         {
             viewModel.StateChanged += OnStateChanged;
             viewModel.ClearExpiredChallenge(DateTimeOffset.UtcNow);
