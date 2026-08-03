@@ -4,11 +4,12 @@ The SonicRelay publisher ships on Linux from the same Avalonia shell as Windows 
 
 ## Release assets
 
-Every tagged release publishes three Linux `linux-x64` assets alongside the existing Windows assets, all built from the same tag/commit:
+Every tagged release publishes four Linux `linux-x64` assets alongside the existing Windows assets, all built from the same tag/commit:
 
 - `SonicRelay-LinuxPublisher-linux-x64-<version>.tar.gz` — portable, self-contained folder archive. Extract and run; installs nothing.
 - `SonicRelay-LinuxPublisher-linux-x64-<version>.deb` — installable package for Ubuntu/Debian.
 - `SonicRelay-LinuxPublisher-linux-x64-<version>.rpm` — installable package for Fedora.
+- `SonicRelay-LinuxPublisher-linux-x64-<version>.AppImage` — portable single-file app; installs nothing, runs on any x64 glibc-based distribution.
 - `checksums-sha256.txt` — SHA-256 checksums for every release asset (Windows and Linux).
 
 Each package embeds a `BUILD-INFO.txt` (version, commit, runtime, build timestamp) next to the application binary for support/diagnostics.
@@ -18,8 +19,8 @@ Each package embeds a `BUILD-INFO.txt` (version, commit, runtime, build timestam
 | Tier | Systems |
 | --- | --- |
 | Officially supported | Ubuntu 24.04 LTS Desktop (GNOME, Wayland or Xorg session) |
-| Best effort | Ubuntu 26.04 LTS, Debian 13 and compatible Debian-based systems, Fedora Workstation (current release), KDE Plasma with compatible PipeWire/tray services, other x64 distributions via the portable archive |
-| Out of scope | `linux-arm64`; Flatpak, Snap, or AppImage packages; macOS; PulseAudio as the primary capture path; Wine; every desktop environment/tray protocol; Linux autostart |
+| Best effort | Ubuntu 26.04 LTS, Debian 13 and compatible Debian-based systems, Fedora Workstation (current release), KDE Plasma with compatible PipeWire/tray services, other x64 distributions via the portable archive or AppImage |
+| Out of scope | `linux-arm64`; Flatpak or Snap packages; macOS; PulseAudio as the primary capture path; Wine; every desktop environment/tray protocol; Linux autostart |
 
 Fedora's `.rpm` is a best-effort convenience package: it uses the same publish output and dependency set validated on Ubuntu 24.04, but has not gone through the same manual desktop validation pass as Ubuntu 24.04 (see [Known limitations](#known-limitations)).
 
@@ -61,6 +62,15 @@ tar -xzf SonicRelay-LinuxPublisher-linux-x64-<version>.tar.gz -C ~/Applications/
 
 No installation step, no admin privileges, and no desktop-menu entry — extract it anywhere user-writable and run the binary directly. This is the right choice for distributions outside the supported/best-effort list above, or for running multiple versions side by side.
 
+## Using the `.AppImage`
+
+```bash
+chmod +x SonicRelay-LinuxPublisher-linux-x64-<version>.AppImage
+./SonicRelay-LinuxPublisher-linux-x64-<version>.AppImage
+```
+
+Like the `.tar.gz`, this is a portable, no-install, no-admin option — a single file instead of an archive to extract, and it carries its own desktop entry and icon for integration tools (e.g. AppImageLauncher, `appimaged`) that add it to the application menu; without one of those it just runs standalone, the same as the `.tar.gz`. Mounting it directly needs FUSE (`libfuse2` on distributions where it isn't preinstalled); where FUSE is unavailable, run it with `--appimage-extract-and-run` instead.
+
 ## Runtime dependencies
 
 The publish output is self-contained (it bundles the .NET runtime), but it still depends on system libraries and the PipeWire audio stack, all pulled in automatically by the `.deb`/`.rpm` package managers:
@@ -76,7 +86,7 @@ On the officially supported Ubuntu 24.04 GNOME desktop, every one of these ships
 
 - The `.rpm`/Fedora path is best effort: it is built and dependency-checked in CI, but has not been through the same manual Wayland/Xorg/tray/sink-switching validation pass as Ubuntu 24.04 (see the design spec's manual first-release gate). Report Fedora-specific issues; they will not block an Ubuntu 24.04 release.
 - No `linux-arm64` build.
-- No Flatpak/Snap/AppImage; the sandboxed-packaging story (which would need a different, portal-based audio capture design) is deferred.
+- No Flatpak/Snap; the sandboxed-packaging story (which would need a different, portal-based audio capture design) is deferred. The `.AppImage` is not sandboxed and needs no such redesign.
 - No Linux autostart entry yet — SonicRelay does not add itself to your session's startup apps.
 - Tray/notification-area integration depends on your desktop's tray protocol support; when unavailable, closing the window quits the app normally instead of minimizing to an unreachable hidden process.
 - PulseAudio-only systems without PipeWire are not a supported capture path; the adapter never falls back to a PulseAudio-only monitor source.
@@ -89,4 +99,4 @@ The Diagnostics page reports platform-specific state for support requests, inclu
 
 `.github/workflows/ci.yml` builds and tests the solution on both `windows-latest` and `ubuntu-24.04` for every pull request and push to `main`, including a Linux startup smoke test that launches the actual published `linux-x64` binary under a virtual display (`xvfb-run`) and confirms it stays up without a live PipeWire session, Secret Service, or backend available.
 
-`.github/workflows/release.yml` builds, tests, and releases on `v*` tags (or manual dispatch): the Windows job publishes the win-x64 assets and creates the GitHub Release first; a dependent `linux-package` job then checks out the exact same commit, publishes the self-contained `linux-x64` output, builds the `.tar.gz`/`.deb`/`.rpm` via [`packaging/linux/build-packages.sh`](../packaging/linux/build-packages.sh) (using [`fpm`](https://fpm.readthedocs.io/)), and extends the release's `checksums-sha256.txt` and notes with the Linux assets — so every release has one canonical checksums file and note set covering both platforms.
+`.github/workflows/release.yml` builds, tests, and releases on `v*` tags (or manual dispatch): the Windows job publishes the win-x64 assets and creates the GitHub Release first; a dependent `linux-package` job then checks out the exact same commit, publishes the self-contained `linux-x64` output, builds the `.tar.gz`/`.deb`/`.rpm`/`.AppImage` via [`packaging/linux/build-packages.sh`](../packaging/linux/build-packages.sh) (using [`fpm`](https://fpm.readthedocs.io/) for the `.deb`/`.rpm` and [`appimagetool`](https://github.com/AppImage/AppImageKit) for the `.AppImage`), and extends the release's `checksums-sha256.txt` and notes with the Linux assets — so every release has one canonical checksums file and note set covering both platforms.
