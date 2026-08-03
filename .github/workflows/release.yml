@@ -251,7 +251,13 @@ jobs:
       - name: Install fpm
         run: sudo gem install --no-document fpm
 
-      - name: Build tar.gz, deb, and rpm packages
+      - name: Install appimagetool
+        run: |
+          curl -fsSL -o /usr/local/bin/appimagetool \
+            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /usr/local/bin/appimagetool
+
+      - name: Build tar.gz, deb, rpm, and AppImage packages
         run: >-
           packaging/linux/build-packages.sh
           artifacts/publish/linux-x64
@@ -271,10 +277,10 @@ jobs:
           # Merge into the Windows job's checksums-sha256.txt so there is one canonical
           # checksums file per release, covering every platform's assets.
           gh release download "$RELEASE_TAG" --pattern checksums-sha256.txt --dir "$distDir" --clobber
-          ( cd "$distDir" && sha256sum SonicRelay-LinuxPublisher-*.tar.gz SonicRelay-LinuxPublisher-*.deb SonicRelay-LinuxPublisher-*.rpm >> checksums-sha256.txt )
+          ( cd "$distDir" && sha256sum SonicRelay-LinuxPublisher-*.tar.gz SonicRelay-LinuxPublisher-*.deb SonicRelay-LinuxPublisher-*.rpm SonicRelay-LinuxPublisher-*.AppImage >> checksums-sha256.txt )
 
           currentNotes=$(gh release view "$RELEASE_TAG" --json body --jq .body)
-          linuxNotes=$(printf '\n\n## Linux assets\n\n- `SonicRelay-LinuxPublisher-linux-x64-%s.tar.gz`: portable self-contained folder archive.\n- `SonicRelay-LinuxPublisher-linux-x64-%s.deb`: Debian/Ubuntu package (officially Ubuntu 24.04).\n- `SonicRelay-LinuxPublisher-linux-x64-%s.rpm`: Fedora package (best effort).\n\nSee `docs/linux-publisher.md` for installation, dependencies, and known limitations.\n' "$RELEASE_VERSION" "$RELEASE_VERSION" "$RELEASE_VERSION")
+          linuxNotes=$(printf '\n\n## Linux assets\n\n- `SonicRelay-LinuxPublisher-linux-x64-%s.tar.gz`: portable self-contained folder archive.\n- `SonicRelay-LinuxPublisher-linux-x64-%s.deb`: Debian/Ubuntu package (officially Ubuntu 24.04).\n- `SonicRelay-LinuxPublisher-linux-x64-%s.rpm`: Fedora package (best effort).\n- `SonicRelay-LinuxPublisher-linux-x64-%s.AppImage`: portable single-file app for any x64 glibc-based distribution.\n\nSee `docs/linux-publisher.md` for installation, dependencies, and known limitations.\n' "$RELEASE_VERSION" "$RELEASE_VERSION" "$RELEASE_VERSION" "$RELEASE_VERSION")
 
           gh release edit "$RELEASE_TAG" --notes "${currentNotes}${linuxNotes}"
 
@@ -282,5 +288,6 @@ jobs:
             "$distDir"/SonicRelay-LinuxPublisher-*.tar.gz \
             "$distDir"/SonicRelay-LinuxPublisher-*.deb \
             "$distDir"/SonicRelay-LinuxPublisher-*.rpm \
+            "$distDir"/SonicRelay-LinuxPublisher-*.AppImage \
             "$distDir/checksums-sha256.txt" \
             --clobber

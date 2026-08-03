@@ -1,0 +1,7 @@
+#!/bin/sh
+# AppImage entry point. Resolves the AppDir root from this script's own mounted/extracted
+# location (never a hardcoded path, unlike packaging/linux/sonicrelay which assumes a
+# real /usr/lib install) and execs the published binary directly from it.
+set -e
+here="$(CDPATH= cd -- "$(dirname -- "$(readlink -f -- "$0")")" && pwd)"
+exec "$here/usr/lib/sonicrelay/SonicRelay.Windows.Desktop" "$@"

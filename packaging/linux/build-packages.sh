@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Builds the Linux release assets for the SonicRelay publisher (issue #40) from an
 # already-published self-contained linux-x64 output: a portable .tar.gz, a Debian/Ubuntu
-# .deb, and a Fedora .rpm, all sharing the same FHS staging layout and version.
+# .deb, a Fedora .rpm, and a portable .AppImage, all sharing the same staging layout and
+# version. Requires fpm (.deb/.rpm) and appimagetool (.AppImage) on PATH.
 #
 # Usage: build-packages.sh <publish-dir> <version> <commit-sha> <output-dir>
 set -euo pipefail
@@ -118,3 +119,27 @@ fpm --output-type rpm \
     --depends fontconfig --depends libX11 \
     --package "$rpmPath"
 echo "Wrote $rpmPath"
+
+# ---- .AppImage (portable, any x64 glibc distribution) ------------------------
+# A self-contained AppDir, separate from the .deb/.rpm staging above: AppRun execs the
+# published binary by a path resolved relative to itself (not the /usr/lib/sonicrelay
+# absolute path packaging/linux/sonicrelay assumes), since the AppImage is mounted or
+# extracted at a different location on every run.
+appdir="$staging_dir/SonicRelay.AppDir"
+
+install -d "$appdir/usr/lib/sonicrelay"
+cp -a "$publish_dir/." "$appdir/usr/lib/sonicrelay/"
+
+install -d "$appdir/usr/share/applications"
+install -m 644 "$repo_root/packaging/linux/sonicrelay.desktop" "$appdir/usr/share/applications/sonicrelay.desktop"
+
+install -d "$appdir/usr/share/icons/hicolor/256x256/apps"
+install -m 644 "$repo_root/packaging/linux/icons/sonicrelay.png" "$appdir/usr/share/icons/hicolor/256x256/apps/sonicrelay.png"
+
+install -m 755 "$repo_root/packaging/linux/AppRun" "$appdir/AppRun"
+install -m 644 "$repo_root/packaging/linux/sonicrelay.desktop" "$appdir/sonicrelay.desktop"
+install -m 644 "$repo_root/packaging/linux/icons/sonicrelay.png" "$appdir/sonicrelay.png"
+
+appImagePath="$output_dir/$product_name-$runtime_id-$version.AppImage"
+ARCH=x86_64 appimagetool --appimage-extract-and-run "$appdir" "$appImagePath"
+echo "Wrote $appImagePath"
