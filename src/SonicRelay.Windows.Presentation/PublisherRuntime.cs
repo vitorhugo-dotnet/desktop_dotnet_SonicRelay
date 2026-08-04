@@ -1,6 +1,7 @@
 using SonicRelay.Windows.ApiClient.DeviceIdentity;
 using SonicRelay.Windows.ApiClient.Pairing;
 using SonicRelay.Windows.ApiClient.Sessions;
+using SonicRelay.Windows.ApiClient.Settings;
 using SonicRelay.Windows.ApiClient.WebRtc;
 using SonicRelay.Windows.Audio;
 using SonicRelay.Windows.Core.Audio;
@@ -40,6 +41,7 @@ public sealed class PublisherRuntime : IAsyncDisposable
         IWebRtcPublisher webRtcPublisher,
         WebRtcAudioBridge audioBridge,
         RelayPreferenceStore relayPreference,
+        IRelaySettingsApiClient relaySettingsApi,
         AudioQualityStore audioQuality,
         IAudioCaptureService audioCapture,
         AudioOutputPreferenceStore audioOutput,
@@ -54,6 +56,7 @@ public sealed class PublisherRuntime : IAsyncDisposable
         Workflow = workflow;
         BackendBaseUrl = backendBaseUrl;
         RelayPreference = relayPreference;
+        RelaySettingsApi = relaySettingsApi;
         AudioQuality = audioQuality;
         AudioCapture = audioCapture;
         AudioOutput = audioOutput;
@@ -69,6 +72,7 @@ public sealed class PublisherRuntime : IAsyncDisposable
     public PublisherWorkflow Workflow { get; }
     public Uri BackendBaseUrl { get; }
     public RelayPreferenceStore RelayPreference { get; }
+    public IRelaySettingsApiClient RelaySettingsApi { get; }
     public AudioQualityStore AudioQuality { get; }
     public IAudioCaptureService AudioCapture { get; }
     public AudioOutputPreferenceStore AudioOutput { get; }
@@ -123,6 +127,7 @@ public sealed class PublisherRuntime : IAsyncDisposable
             new WebRtcApiClient(http, deviceIdentitySession),
             allowGoogleStunDevFallback: AllowGoogleStunDevFallback);
         var relayPreference = new RelayPreferenceStore();
+        var relaySettingsApi = new RelaySettingsApiClient(http, deviceIdentitySession);
         var audioQuality = new AudioQualityStore();
         var peers = new PeerConnectionManager(
             new SipSorceryPeerConnectionFactory(
@@ -156,6 +161,7 @@ public sealed class PublisherRuntime : IAsyncDisposable
             webRtcPublisher,
             audioBridge,
             relayPreference,
+            relaySettingsApi,
             audioQuality,
             audio,
             audioOutput,

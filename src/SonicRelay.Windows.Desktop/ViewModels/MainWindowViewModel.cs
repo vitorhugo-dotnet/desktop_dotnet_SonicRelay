@@ -167,7 +167,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         Settings = next is null
             ? new SettingsViewModel()
-            : new SettingsViewModel(next.BackendBaseUrl.ToString(), next.RelayPreference, next.AudioQuality, ChangeBackendUrlAsync);
+            : new SettingsViewModel(next.BackendBaseUrl.ToString(), next.RelayPreference, next.AudioQuality, next.RelaySettingsApi, ChangeBackendUrlAsync);
         Audio = next is null
             ? new AudioPageViewModel()
             : new AudioPageViewModel(next.AudioCapture, next.AudioOutput);
@@ -187,6 +187,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private void Apply(PublisherSnapshot? state, WebRtcPublisherDiagnostics? diagnostics, bool forceRelay)
     {
         Shell.Update(state, diagnostics, forceRelay);
+        Settings.UpdateAuthentication(state?.HasDeviceIdentity ?? false);
         // The runtime only creates its PairingViewModel once device-identity bootstrap
         // succeeds (PublisherRuntime.InitializeDeviceIdentityAsync), so this stays null —
         // and the pairing view renders its disconnected placeholder — until then.

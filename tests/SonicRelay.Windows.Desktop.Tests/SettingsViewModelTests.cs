@@ -1,3 +1,4 @@
+using SonicRelay.Windows.ApiClient.Settings;
 using SonicRelay.Windows.Core.Audio;
 using SonicRelay.Windows.Core.Configuration;
 using SonicRelay.Windows.Desktop.ViewModels;
@@ -39,18 +40,6 @@ public sealed class SettingsViewModelTests : IDisposable
         Assert.Equal("https://backend.example/", vm.BackendUrl);
         Assert.Equal(quality.CurrentProfile.Id, vm.SelectedProfile.Id);
         Assert.Contains(AudioQualityProfile.Voice, vm.Profiles);
-    }
-
-    [Fact]
-    public void Toggling_force_relay_updates_the_store()
-    {
-        var (relay, quality) = Stores();
-        var vm = new SettingsViewModel("https://backend.example/", relay, quality);
-
-        vm.ForceRelay = true;
-
-        // The store applies the value synchronously (before the disk write) for the next stream.
-        Assert.True(relay.ForceRelay);
     }
 
     [Fact]
@@ -119,4 +108,85 @@ public sealed class SettingsViewModelBackendUrlTests
             new SonicRelay.Windows.Core.Audio.AudioQualityStore(
                 Path.Combine(Path.GetTempPath(), $"sonicrelay-settings-vm-test-quality-{Guid.NewGuid():N}.json")),
             changeBackendUrl);
+}
+
+public sealed class SettingsViewModelRelaySettingsTests
+{
+    [Fact]
+    public async Task Refresh_applies_the_servers_relay_mode_and_turn_uri()
+    {
+        var api = new StubRelaySettingsApiClient(
+            get: new RelaySettingsResponse("forceRelay", ["turn:mine.example.com:3478"], true));
+        var vm = MakeConnectedViewModel(api);
+
+        await vm.RefreshRelaySettingsAsync();
+
+        Assert.Equal("forceRelay", vm.RelayMode);
+        Assert.Equal("turn:mine.example.com:3478", vm.TurnUriInput);
+        Assert.Null(vm.RelaySettingsError);
+    }
+
+    [Fact]
+    public async Task Saving_the_relay_mode_writes_through_to_the_server_and_applies_the_response()
+    {
+        var api = new StubRelaySettingsApiClient(
+            update: new RelaySettingsResponse("disableFallback", [], false));
+        var vm = MakeConnectedViewModel(api);
+        vm.RelayMode = "disableFallback";
+
+        await vm.SaveRelayModeAsync();
+
+        Assert.Equal("disableFallback", api.LastUpdateRequest!.RelayMode);
+        Assert.Equal("disableFallback", vm.RelayMode);
+    }
+
+    [Fact]
+    public async Task Saving_the_turn_uri_sends_it_as_a_single_element_list()
+    {
+        var api = new StubRelaySettingsApiClient(
+            update: new RelaySettingsResponse("automatic", ["turn:new.example.com:3478"], false));
+        var vm = MakeConnectedViewModel(api);
+        vm.TurnUriInput = "turn:new.example.com:3478";
+
+        await vm.SaveTurnUriAsync();
+
+        Assert.Equal(["turn:new.example.com:3478"], api.LastUpdateRequest!.TurnUris);
+    }
+
+    [Fact]
+    public void Coturn_field_is_hidden_until_the_device_has_an_identity()
+    {
+        var vm = MakeConnectedViewModel(new StubRelaySettingsApiClient());
+
+        Assert.False(vm.HasDeviceIdentity);
+
+        vm.UpdateAuthentication(true);
+
+        Assert.True(vm.HasDeviceIdentity);
+    }
+
+    private static SettingsViewModel MakeConnectedViewModel(IRelaySettingsApiClient api) =>
+        new(
+            "https://backend.example.test/",
+            new SonicRelay.Windows.Core.Configuration.RelayPreferenceStore(
+                Path.Combine(Path.GetTempPath(), $"sonicrelay-settings-vm-relay-test-{Guid.NewGuid():N}.json")),
+            new SonicRelay.Windows.Core.Audio.AudioQualityStore(
+                Path.Combine(Path.GetTempPath(), $"sonicrelay-settings-vm-relay-test-quality-{Guid.NewGuid():N}.json")),
+            api,
+            _ => Task.FromResult<string?>(null));
+
+    private sealed class StubRelaySettingsApiClient(
+        RelaySettingsResponse? get = null, RelaySettingsResponse? update = null) : IRelaySettingsApiClient
+    {
+        public UpdateRelaySettingsRequest? LastUpdateRequest { get; private set; }
+
+        public Task<RelaySettingsResponse> GetAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(get ?? new RelaySettingsResponse("automatic", [], false));
+
+        public Task<RelaySettingsResponse> UpdateAsync(UpdateRelaySettingsRequest request, CancellationToken cancellationToken = default)
+        {
+            LastUpdateRequest = request;
+            return Task.FromResult(update ?? new RelaySettingsResponse("automatic", [], false));
+        }
+    }
 }

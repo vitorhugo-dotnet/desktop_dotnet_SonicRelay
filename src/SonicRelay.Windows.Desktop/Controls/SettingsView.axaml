@@ -25,16 +25,23 @@
                        IsVisible="{Binding HasBackendUrlError}"
                        Text="{Binding BackendUrlError}" TextWrapping="Wrap" />
           </StackPanel>
-          <Grid ColumnDefinitions="*,Auto">
-            <StackPanel Spacing="2" VerticalAlignment="Center">
-              <TextBlock Text="Force relay (TURN only)"
-                         Foreground="{DynamicResource Sonic.TextPrimaryBrush}"
-                         FontSize="{StaticResource Sonic.FontSizeBody}" />
-              <TextBlock Classes="metric-label" Text="Route media through the TURN relay instead of a direct path." />
-            </StackPanel>
-            <ToggleSwitch Grid.Column="1" IsChecked="{Binding ForceRelay}"
-                          AutomationProperties.Name="Force relay (TURN only)" />
-          </Grid>
+          <StackPanel Spacing="4">
+            <TextBlock Text="Relay mode" Foreground="{DynamicResource Sonic.TextPrimaryBrush}" />
+            <TextBlock Classes="metric-label" Text="Automatic falls back to relay only if a direct path fails." />
+            <ComboBox ItemsSource="{Binding RelayModeOptions}" SelectedItem="{Binding RelayMode}"
+                      AutomationProperties.Name="Relay mode" />
+            <Button Content="Save relay mode" Command="{Binding SaveRelayModeCommand}" Margin="0,4,0,0" />
+          </StackPanel>
+          <StackPanel Spacing="4" IsVisible="{Binding HasDeviceIdentity}">
+            <TextBlock Text="Coturn URL" Foreground="{DynamicResource Sonic.TextPrimaryBrush}" />
+            <TextBlock Classes="metric-label" Text="Override the TURN server this backend hands out to every device." />
+            <TextBox Text="{Binding TurnUriInput}" Watermark="turn:your-coturn-server.example.com:3478"
+                     AutomationProperties.Name="Coturn URL" />
+            <Button Content="Save coturn URL" Command="{Binding SaveTurnUriCommand}" />
+          </StackPanel>
+          <TextBlock Classes="metric-label" Foreground="{DynamicResource Sonic.DangerBrush}"
+                     IsVisible="{Binding RelaySettingsError, Converter={x:Static ObjectConverters.IsNotNull}}"
+                     Text="{Binding RelaySettingsError}" TextWrapping="Wrap" />
         </StackPanel>
       </Border>
 
