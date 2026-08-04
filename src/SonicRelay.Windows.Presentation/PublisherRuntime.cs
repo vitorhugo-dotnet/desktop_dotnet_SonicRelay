@@ -92,7 +92,8 @@ public sealed class PublisherRuntime : IAsyncDisposable
         Uri backendBaseUrl,
         IAudioCaptureService audioCapture,
         IDeviceCredentialStore? credentialStoreOverride = null,
-        AudioOutputPreferenceStore? audioOutputPreferenceOverride = null)
+        AudioOutputPreferenceStore? audioOutputPreferenceOverride = null,
+        IRelaySettingsApiClient? relaySettingsApiOverride = null)
     {
         ArgumentNullException.ThrowIfNull(backendBaseUrl);
         ArgumentNullException.ThrowIfNull(audioCapture);
@@ -127,7 +128,7 @@ public sealed class PublisherRuntime : IAsyncDisposable
             new WebRtcApiClient(http, deviceIdentitySession),
             allowGoogleStunDevFallback: AllowGoogleStunDevFallback);
         var relayPreference = new RelayPreferenceStore();
-        var relaySettingsApi = new RelaySettingsApiClient(http, deviceIdentitySession);
+        var relaySettingsApi = relaySettingsApiOverride ?? new RelaySettingsApiClient(http, deviceIdentitySession);
         var audioQuality = new AudioQualityStore();
         var peers = new PeerConnectionManager(
             new SipSorceryPeerConnectionFactory(
@@ -189,6 +190,10 @@ public sealed class PublisherRuntime : IAsyncDisposable
         // receives its own session.ended; tear down peer connections here when
         // the active session clears.
         var hasSession = state.SessionId is not null;
+        if (!hadActiveSession && hasSession)
+        {
+            _ = RefreshRelaySettingsAsync();
+        }
         if (hadActiveSession && !hasSession)
         {
             _ = peers.RemoveAllAsync();
@@ -205,6 +210,23 @@ public sealed class PublisherRuntime : IAsyncDisposable
             ["audio"] = state.AudioState.ToString(),
             ["viewerCount"] = state.ViewerCount.ToString(System.Globalization.CultureInfo.InvariantCulture)
         });
+    }
+
+    private async Task RefreshRelaySettingsAsync()
+    {
+        try
+        {
+            var response = await RelaySettingsApi.GetAsync();
+            await RelayPreference.ApplyFetchedRelayModeAsync(response.RelayMode);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            // Best-effort — a stale local RelayMode only affects the client-side ICE transport
+            // policy for the session about to start, never security or the TURN entries
+            // themselves (those are decided server-side, live, per connection).
+            _ = WriteDiagnosticAsync("runtime", "Could not refresh relay settings before session start.",
+                new Dictionary<string, string> { ["error"] = exception.Message });
+        }
     }
 
     private async Task WriteDiagnosticAsync(string category, string message, IReadOnlyDictionary<string, string> properties)
