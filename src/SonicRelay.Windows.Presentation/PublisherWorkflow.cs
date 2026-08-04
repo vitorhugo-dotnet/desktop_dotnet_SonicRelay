@@ -124,6 +124,38 @@ public sealed class PublisherWorkflow : IAsyncDisposable
         }, cancellationToken);
     }
 
+    /// <summary>
+    /// Signs out of this publisher device: tears down any active session, then forgets
+    /// the local device identity so the shell falls back to the pairing surface and a
+    /// fresh device identity — and pairing challenge — can be bootstrapped without
+    /// restarting the app. Needed because a stale or rejected device credential
+    /// otherwise has no recovery path short of a restart (issue #26 follow-up).
+    /// </summary>
+    public Task LogoutAsync(CancellationToken cancellationToken = default) =>
+        ExecuteAsync(async token =>
+        {
+            if (State.SessionId is { } sessionId)
+            {
+                if (audio.State is not AudioCaptureState.Stopped) await audio.StopAsync(token);
+                await signaling.CloseAsync(token);
+                try { await sessions.EndSessionAsync(sessionId, token); } catch { }
+            }
+
+            await deviceIdentity.ResetAsync(token);
+
+            SetState(state => state with
+            {
+                IsAuthenticated = false,
+                UserDisplayName = null,
+                UserEmail = null,
+                DeviceId = null,
+                DeviceName = null,
+                SessionId = null,
+                SessionCode = null,
+                ViewerCount = 0
+            }, "Signed out.");
+        }, cancellationToken);
+
     private async Task RefreshViewerCountCoreAsync(CancellationToken cancellationToken)
     {
         if (State.SessionId is not { } id) return;

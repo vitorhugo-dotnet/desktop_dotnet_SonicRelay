@@ -5,9 +5,10 @@ namespace SonicRelay.Windows.Desktop.Controls;
 
 /// <summary>
 /// Account area and global transmission status for the top bar (issue #32 component). The
-/// account fields come from the <c>DashboardShellViewModel</c> DataContext. There is no
-/// sign-out action in the device-identity model (issue #26) — a paired device stays paired
-/// until revoked from the pairing surface or a viewer's own device management.
+/// account fields come from the <c>DashboardShellViewModel</c> DataContext. The adjacent
+/// "Sign out" button in <c>MainWindow.axaml</c> (bound to <c>MainWindowViewModel.LogoutCommand</c>)
+/// forgets this device's identity and returns to the pairing surface — the recovery path for a
+/// stale/rejected device credential (issue #26 follow-up).
 /// </summary>
 public partial class AccountStatusHeader : UserControl
 {

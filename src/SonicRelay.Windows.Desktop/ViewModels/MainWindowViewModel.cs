@@ -43,6 +43,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         StopAudioCommand = new RelayCommand(() => Run(w => w.StopAudioAsync()), () => ShellCommandAvailability.StopAudio(snapshot, HasWorkflow));
         EndSessionCommand = new RelayCommand(() => Run(w => w.EndSessionAsync()), () => ShellCommandAvailability.EndSession(snapshot, HasWorkflow));
         RetryCommand = new RelayCommand(() => Run(w => w.ReconnectSignalingAsync()), () => ShellCommandAvailability.Retry(snapshot, Shell.Capabilities, HasWorkflow));
+        LogoutCommand = new RelayCommand(LogoutAsync, () => ShellCommandAvailability.Logout(snapshot, Shell.Capabilities, HasWorkflow));
         ExportDiagnosticsCommand = new RelayCommand(ExportDiagnosticsAsync, () => runtime is not null);
         ClearDiagnosticsCommand = new RelayCommand(ClearDiagnosticsAsync, () => runtime is not null);
     }
@@ -154,6 +155,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     public RelayCommand StopAudioCommand { get; }
     public RelayCommand EndSessionCommand { get; }
     public RelayCommand RetryCommand { get; }
+    public RelayCommand LogoutCommand { get; }
     public RelayCommand ExportDiagnosticsCommand { get; }
     public RelayCommand ClearDiagnosticsCommand { get; }
 
@@ -222,6 +224,23 @@ public sealed class MainWindowViewModel : ViewModelBase
     private Task Run(Func<PublisherWorkflow, Task> action) =>
         workflow is null ? Task.CompletedTask : action(workflow);
 
+    /// <summary>
+    /// Signs out (issue #26 follow-up): clears the local device identity and, once
+    /// signed out, immediately re-bootstraps a fresh one so the pairing surface shows
+    /// a new QR/challenge right away rather than requiring an app restart. A backend
+    /// hiccup during re-bootstrap simply leaves the pairing surface for a manual retry.
+    /// </summary>
+    private async Task LogoutAsync()
+    {
+        if (workflow is null) return;
+        await workflow.LogoutAsync();
+        if (runtime is not null)
+        {
+            try { await runtime.InitializeDeviceIdentityAsync(); }
+            catch { }
+        }
+    }
+
     private async Task ExportDiagnosticsAsync()
     {
         DisarmClearLogs();
@@ -265,6 +284,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         StopAudioCommand.RaiseCanExecuteChanged();
         EndSessionCommand.RaiseCanExecuteChanged();
         RetryCommand.RaiseCanExecuteChanged();
+        LogoutCommand.RaiseCanExecuteChanged();
         ExportDiagnosticsCommand.RaiseCanExecuteChanged();
         ClearDiagnosticsCommand.RaiseCanExecuteChanged();
     }
