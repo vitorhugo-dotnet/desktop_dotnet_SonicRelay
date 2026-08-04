@@ -1,3 +1,4 @@
+using System.Text.Json;
 using SonicRelay.Windows.Core.Configuration;
 
 namespace SonicRelay.Windows.Core.Tests;
@@ -7,21 +8,46 @@ public sealed class RelayPreferenceStoreTests : IDisposable
     private readonly string path = Path.Combine(Path.GetTempPath(), $"sonicrelay-prefs-{Guid.NewGuid():N}.json");
 
     [Fact]
-    public void DefaultsToDirectWhenNoFileExists()
+    public void DefaultsToAutomaticWhenNoFileExists()
     {
-        Assert.False(new RelayPreferenceStore(path).ForceRelay);
+        var store = new RelayPreferenceStore(path);
+
+        Assert.Equal(RelayModes.Automatic, store.RelayMode);
+        Assert.False(store.ForceRelay);
     }
 
     [Fact]
-    public async Task PersistsForceRelayAcrossInstances()
+    public async Task PersistsRelayModeAcrossInstances()
     {
-        await new RelayPreferenceStore(path).SetForceRelayAsync(true);
+        await new RelayPreferenceStore(path).SetRelayModeAsync(RelayModes.ForceRelay);
 
-        // A fresh instance reads the persisted preference back.
-        Assert.True(new RelayPreferenceStore(path).ForceRelay);
+        var reloaded = new RelayPreferenceStore(path);
+        Assert.Equal(RelayModes.ForceRelay, reloaded.RelayMode);
+        Assert.True(reloaded.ForceRelay);
+    }
 
-        await new RelayPreferenceStore(path).SetForceRelayAsync(false);
-        Assert.False(new RelayPreferenceStore(path).ForceRelay);
+    [Fact]
+    public async Task ApplyFetchedRelayModePersistsWithoutRequiringAWriteThroughCaller()
+    {
+        await new RelayPreferenceStore(path).ApplyFetchedRelayModeAsync(RelayModes.DisableFallback);
+
+        Assert.Equal(RelayModes.DisableFallback, new RelayPreferenceStore(path).RelayMode);
+    }
+
+    [Fact]
+    public void ReadingAnOldBooleanShapedFileMigratesForceRelayTrueToTheForceRelayMode()
+    {
+        File.WriteAllText(path, JsonSerializer.Serialize(new { ForceRelay = true }));
+
+        Assert.Equal(RelayModes.ForceRelay, new RelayPreferenceStore(path).RelayMode);
+    }
+
+    [Fact]
+    public void ReadingAnOldBooleanShapedFileMigratesForceRelayFalseToAutomatic()
+    {
+        File.WriteAllText(path, JsonSerializer.Serialize(new { ForceRelay = false }));
+
+        Assert.Equal(RelayModes.Automatic, new RelayPreferenceStore(path).RelayMode);
     }
 
     public void Dispose()
