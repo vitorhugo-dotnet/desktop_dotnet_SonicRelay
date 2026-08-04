@@ -69,3 +69,54 @@ public sealed class SettingsViewModelTests : IDisposable
         try { Directory.Delete(dir, recursive: true); } catch { }
     }
 }
+
+public sealed class SettingsViewModelBackendUrlTests
+{
+    [Fact]
+    public async Task Save_rejects_a_non_absolute_url_without_calling_the_change_delegate()
+    {
+        var called = false;
+        var vm = MakeConnectedViewModel(url =>
+        {
+            called = true;
+            return Task.FromResult<string?>(null);
+        });
+        vm.BackendUrlInput = "not-a-url";
+
+        await vm.SaveBackendUrlAsync();
+
+        Assert.False(called);
+        Assert.NotNull(vm.BackendUrlError);
+    }
+
+    [Fact]
+    public async Task Save_surfaces_the_error_the_change_delegate_returns()
+    {
+        var vm = MakeConnectedViewModel(_ => Task.FromResult<string?>("Backend unreachable."));
+        vm.BackendUrlInput = "https://new-backend.example.test/";
+
+        await vm.SaveBackendUrlAsync();
+
+        Assert.Equal("Backend unreachable.", vm.BackendUrlError);
+    }
+
+    [Fact]
+    public async Task Successful_save_clears_any_previous_error()
+    {
+        var vm = MakeConnectedViewModel(_ => Task.FromResult<string?>(null));
+        vm.BackendUrlInput = "https://good-backend.example.test/";
+
+        await vm.SaveBackendUrlAsync();
+
+        Assert.Null(vm.BackendUrlError);
+    }
+
+    private static SettingsViewModel MakeConnectedViewModel(Func<string, Task<string?>> changeBackendUrl) =>
+        new(
+            "https://old-backend.example.test/",
+            new SonicRelay.Windows.Core.Configuration.RelayPreferenceStore(
+                Path.Combine(Path.GetTempPath(), $"sonicrelay-settings-vm-test-{Guid.NewGuid():N}.json")),
+            new SonicRelay.Windows.Core.Audio.AudioQualityStore(
+                Path.Combine(Path.GetTempPath(), $"sonicrelay-settings-vm-test-quality-{Guid.NewGuid():N}.json")),
+            changeBackendUrl);
+}

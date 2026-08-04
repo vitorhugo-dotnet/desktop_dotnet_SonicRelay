@@ -167,7 +167,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         Settings = next is null
             ? new SettingsViewModel()
-            : new SettingsViewModel(next.BackendBaseUrl.ToString(), next.RelayPreference, next.AudioQuality);
+            : new SettingsViewModel(next.BackendBaseUrl.ToString(), next.RelayPreference, next.AudioQuality, ChangeBackendUrlAsync);
         Audio = next is null
             ? new AudioPageViewModel()
             : new AudioPageViewModel(next.AudioCapture, next.AudioOutput);
@@ -229,6 +229,49 @@ public sealed class MainWindowViewModel : ViewModelBase
             try { await runtime.InitializeDeviceIdentityAsync(); }
             catch { }
         }
+    }
+
+    /// <summary>
+    /// Saves a new backend URL and reattaches to it live (issue #26 follow-up — a
+    /// <see cref="UserConfigurationLoader.SaveBackendAsync"/> already existed but nothing
+    /// called it, and the old full-shell pairing gate meant Settings itself was unreachable
+    /// whenever the configured backend was bad). Only rolls back to the previous runtime for
+    /// a save/parse/platform failure — an unreachable *new* backend is not rolled back, since
+    /// the always-visible shell (see Task 1) now lets the user just try again from this same
+    /// page, exactly like a bad URL at cold start.
+    /// </summary>
+    internal async Task<string?> ChangeBackendUrlAsync(string rawUrl)
+    {
+        if (!Uri.TryCreate(rawUrl, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
+        {
+            return "Enter a valid http:// or https:// URL.";
+        }
+
+        PublisherRuntime? next;
+        try
+        {
+            await new SonicRelay.Windows.Core.Configuration.UserConfigurationLoader().SaveBackendAsync(uri);
+            next = SonicRelay.Windows.Desktop.DesktopRuntimeFactory.Create(uri);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or SonicRelay.Windows.Core.Configuration.ConfigurationValidationException)
+        {
+            return exception.Message;
+        }
+
+        if (next is null)
+        {
+            return "This platform has no supported publisher runtime.";
+        }
+
+        var previous = runtime;
+        Attach(next);
+        try { await next.InitializeDeviceIdentityAsync(); } catch { }
+        if (previous is not null)
+        {
+            await previous.DisposeAsync();
+        }
+        return null;
     }
 
     private async Task ExportDiagnosticsAsync()
