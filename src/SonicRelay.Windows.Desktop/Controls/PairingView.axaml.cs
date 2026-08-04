@@ -91,13 +91,21 @@ public partial class PairingView : UserControl
     private void OnExpiryTick(object? sender, EventArgs e) =>
         viewModel?.ClearExpiredChallenge(DateTimeOffset.UtcNow);
 
-    private void OnStateChanged() => Dispatcher.UIThread.Post(Render);
+    // Posted, so isLoaded is re-checked at execution time, not just at post time: closing to
+    // the tray (Window.Hide()) unloads this control while a pairing refresh is still
+    // in-flight, and the resulting StateChanged can fire (and this run) after Unloaded already
+    // fired for this instance — production crashed here with a NullReferenceException touching
+    // named XAML elements once that race landed.
+    private void OnStateChanged() => Dispatcher.UIThread.Post(() =>
+    {
+        if (isLoaded) Render();
+    });
 
     private async Task InitializeAsync()
     {
         if (viewModel is null)
         {
-            Render();
+            if (isLoaded) Render();
             return;
         }
 
@@ -161,7 +169,10 @@ public partial class PairingView : UserControl
         {
             // PairingViewModel exposes the user-facing error via ErrorMessage for Render.
         }
-        Render();
+        // The await above can straddle a Window.Hide()/tray-close cycle: Unloaded may have
+        // already fired for this instance by the time this resumes, so re-check isLoaded
+        // rather than rendering unconditionally.
+        if (isLoaded) Render();
     }
 
     private void Render()
@@ -250,5 +261,31 @@ public partial class PairingView : UserControl
         return row;
     }
 
-    private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
+    // AvaloniaXamlLoader.Load(this) builds the visual tree correctly (every named element is
+    // present and stylable — confirmed via FindControl/visual-tree inspection), but does not
+    // wire the x:Name-generated fields this type's own code touches in Render(): they stay
+    // null forever, and every Render() call — however it gets reached — throws a
+    // NullReferenceException the instant it touches one. That NRE only ever crashed the app
+    // fatally through OnStateChanged's Dispatcher.UIThread.Post(Render): an unobserved
+    // exception on other call paths (the fire-and-forget InitializeAsync/RunUiOperationAsync
+    // callers) is swallowed silently, which is why this control ever shipped. FindControl
+    // reliably resolves the same named elements at runtime, so bind them explicitly instead of
+    // depending on the generated field population.
+    private void InitializeComponent()
+    {
+        AvaloniaXamlLoader.Load(this);
+        DeviceStatusText = this.FindControl<TextBlock>("DeviceStatusText")!;
+        QrImage = this.FindControl<Image>("QrImage")!;
+        PairingCodeText = this.FindControl<TextBlock>("PairingCodeText")!;
+        CopyPairingCodeButton = this.FindControl<Button>("CopyPairingCodeButton")!;
+        PairingChallengeIdText = this.FindControl<TextBlock>("PairingChallengeIdText")!;
+        CopyChallengeIdButton = this.FindControl<Button>("CopyChallengeIdButton")!;
+        PairingExpiryText = this.FindControl<TextBlock>("PairingExpiryText")!;
+        SessionCodeText = this.FindControl<TextBlock>("SessionCodeText")!;
+        RefreshChallengeButton = this.FindControl<Button>("RefreshChallengeButton")!;
+        RefreshPairingsButton = this.FindControl<Button>("RefreshPairingsButton")!;
+        BusyText = this.FindControl<TextBlock>("BusyText")!;
+        ErrorText = this.FindControl<TextBlock>("ErrorText")!;
+        PairingsPanel = this.FindControl<StackPanel>("PairingsPanel")!;
+    }
 }
