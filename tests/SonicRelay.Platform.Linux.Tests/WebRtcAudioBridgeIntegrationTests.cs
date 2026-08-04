@@ -9,7 +9,13 @@ namespace SonicRelay.Platform.Linux.Tests;
 
 internal sealed class FakeWebRtcPublisher : IWebRtcPublisher
 {
-    public List<WebRtcAudioFrame> PushedFrames { get; } = [];
+    // The bridge pushes frames from its own background consumer task (see
+    // WebRtcAudioBridge.ConsumeAsync), concurrently with the test thread reading
+    // PushedFrames, so the backing list needs its own lock rather than exposing the
+    // mutable List<T> directly (which raced with "Collection was modified" under load).
+    private readonly object sync = new();
+    private readonly List<WebRtcAudioFrame> pushedFrames = [];
+    public IReadOnlyList<WebRtcAudioFrame> PushedFrames { get { lock (sync) return pushedFrames.ToArray(); } }
     public WebRtcPublisherDiagnostics Diagnostics { get; } = new(0, []);
     public event Action<WebRtcPublisherDiagnostics>? DiagnosticsChanged;
     public event Action<string>? IceRestartRequested;
@@ -18,7 +24,7 @@ internal sealed class FakeWebRtcPublisher : IWebRtcPublisher
 
     public Task PushAudioFrameAsync(WebRtcAudioFrame frame, CancellationToken cancellationToken = default)
     {
-        PushedFrames.Add(frame);
+        lock (sync) pushedFrames.Add(frame);
         return Task.CompletedTask;
     }
 
