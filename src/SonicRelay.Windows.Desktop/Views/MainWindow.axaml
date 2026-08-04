@@ -11,13 +11,7 @@
         Background="{DynamicResource Sonic.AppBackgroundBrush}">
 
   <Panel>
-    <!-- Pairing surface, shown until this device's identity has bootstrapped (issue #26).
-         DataContext is the PairingViewModel, so ShowPairing is read from the window's root
-         view model explicitly. -->
-    <controls:PairingView DataContext="{Binding Pairing}"
-                          IsVisible="{Binding ((vm:MainWindowViewModel)DataContext).ShowPairing, ElementName=RootWindow}" />
-
-    <Grid ColumnDefinitions="Auto,*" IsVisible="{Binding !ShowPairing}">
+    <Grid ColumnDefinitions="Auto,*">
     <!-- Left navigation rail -->
     <controls:SidebarNavigation Grid.Column="0" Width="232" />
 
@@ -49,6 +43,19 @@
 
       <!-- Page content, swapped by the sidebar selection -->
       <Panel>
+        <!-- Pairing (issue #26 follow-up: a normal, always-reachable page instead of a
+             full-shell gate — the old gate hid Settings too, so a bad backend URL left no
+             way back in, and hid the pairing surface at exactly the moment bootstrap gave it
+             real content to show). Renders its own "device identity unavailable" placeholder
+             when Pairing is null. DataContext is the Pairing view model, so — same as
+             Session/Diagnostics/Audio/Settings below — IsVisible must read IsPairing back off
+             the root DataContext via ElementName rather than an implicit binding: with
+             compiled bindings, an implicit `{Binding IsPairing}` on this same element resolves
+             against this element's own (just-overridden) DataContext type, PairingViewModel,
+             which has no IsPairing member, and fails to build (AVLN2000). -->
+        <controls:PairingView DataContext="{Binding Pairing}"
+                              IsVisible="{Binding ((vm:MainWindowViewModel)DataContext).IsPairing, ElementName=RootWindow}" />
+
         <!-- Dashboard -->
         <DockPanel IsVisible="{Binding IsDashboard}" LastChildFill="True">
           <controls:TechnicalConsole DockPanel.Dock="Bottom"

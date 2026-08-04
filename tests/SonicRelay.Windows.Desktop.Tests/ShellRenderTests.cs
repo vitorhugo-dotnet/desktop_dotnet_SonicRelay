@@ -67,13 +67,14 @@ public sealed class ShellRenderTests
     }
 
     [AvaloniaFact]
-    public void Pairing_surface_renders_for_an_unpaired_shell()
+    public void Pairing_surface_renders_when_the_pairing_page_is_selected()
     {
+        // Pairing is a normal, always-reachable nav page now (issue #26 follow-up), not a
+        // full-shell gate — selecting it explicitly shows the pairing surface.
         var viewModel = new MainWindowViewModel();
+        viewModel.SelectedNavigation = viewModel.Navigation.Single(item => item.Key == PageKey.Pairing);
         var window = new MainWindow
         {
-            // Fresh view model with no runtime: ShowPairing is true, so the pairing surface
-            // shows instead of the dashboard (issue #26).
             DataContext = viewModel,
         };
 
@@ -81,7 +82,7 @@ public sealed class ShellRenderTests
 
         var frame = window.CaptureRenderedFrame();
         Assert.NotNull(frame);
-        Assert.True(viewModel.ShowPairing);
+        Assert.True(viewModel.IsPairing);
 
         var dir = Environment.GetEnvironmentVariable("SHELL_SHOT_DIR");
         if (!string.IsNullOrWhiteSpace(dir))
@@ -92,10 +93,10 @@ public sealed class ShellRenderTests
     }
 
     [AvaloniaFact]
-    public void Dashboard_renders_once_the_shell_is_paired()
+    public void Dashboard_renders_by_default()
     {
-        // CreatePreview's snapshot has IsAuthenticated = true (device identity ready), so the
-        // shell must show the dashboard rather than the pairing surface (issue #26).
+        // A fresh shell (and the preview) opens on the dashboard by default now that Pairing
+        // is an ordinary nav page rather than a snapshot-derived gate (issue #26 follow-up).
         var viewModel = MainWindowViewModel.CreatePreview();
         var window = new MainWindow { DataContext = viewModel };
 
@@ -103,7 +104,7 @@ public sealed class ShellRenderTests
 
         var frame = window.CaptureRenderedFrame();
         Assert.NotNull(frame);
-        Assert.False(viewModel.ShowPairing);
+        Assert.True(viewModel.IsDashboard);
     }
 
     [AvaloniaFact]

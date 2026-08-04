@@ -11,8 +11,8 @@ namespace SonicRelay.Windows.Desktop.ViewModels;
 /// into <see cref="PublisherWorkflow"/> calls once a runtime is attached. With no runtime
 /// (the standalone preview launch) the actions are disabled and the shell renders the
 /// representative snapshot, so the layout and design system stay verifiable without a
-/// backend. Attaching a live runtime shows the pairing surface until the device identity
-/// bootstraps, then the dashboard (issue #26).
+/// backend. Pairing is an ordinary, always-reachable nav page like Audio/Session/Settings —
+/// not a full-shell gate keyed off device-identity bootstrap (issue #26 follow-up).
 /// </summary>
 public sealed class MainWindowViewModel : ViewModelBase
 {
@@ -21,7 +21,6 @@ public sealed class MainWindowViewModel : ViewModelBase
     private IWebRtcPublisher? webRtc;
     private PublisherSnapshot? snapshot;
     private PairingViewModel? pairing;
-    private bool showPairing = true;
     private NavigationItem selectedNavigation;
     private bool clearLogsArmed;
     private string? diagnosticsActionMessage;
@@ -31,6 +30,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         Navigation =
         [
             new NavigationItem(PageKey.Dashboard, "◧", "Dashboard"),
+            new NavigationItem(PageKey.Pairing, "⇄", "Pairing"),
             new NavigationItem(PageKey.Audio, "♪", "Audio"),
             new NavigationItem(PageKey.Session, "⧉", "Session"),
             new NavigationItem(PageKey.Diagnostics, "⚙", "Diagnostics"),
@@ -77,6 +77,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             if (value is null || !SetProperty(ref selectedNavigation, value)) return;
             RaisePropertyChanged(nameof(CurrentPage));
             RaisePropertyChanged(nameof(IsDashboard));
+            RaisePropertyChanged(nameof(IsPairing));
             RaisePropertyChanged(nameof(IsSession));
             RaisePropertyChanged(nameof(IsDiagnostics));
             RaisePropertyChanged(nameof(IsAudio));
@@ -88,6 +89,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public PageKey CurrentPage => selectedNavigation.Key;
     public bool IsDashboard => CurrentPage == PageKey.Dashboard;
+    public bool IsPairing => CurrentPage == PageKey.Pairing;
     public bool IsSession => CurrentPage == PageKey.Session;
     public bool IsDiagnostics => CurrentPage == PageKey.Diagnostics;
     public bool IsAudio => CurrentPage == PageKey.Audio;
@@ -110,21 +112,6 @@ public sealed class MainWindowViewModel : ViewModelBase
         PageKey.Settings => "Backend, relay and audio quality",
         _ => "Live status of the publisher transmission",
     };
-
-    /// <summary>
-    /// Whether the pairing surface (rather than the dashboard) should be shown. Derived from
-    /// the snapshot so a successful device-identity bootstrap flips the shell to the
-    /// dashboard automatically.
-    /// </summary>
-    public bool ShowPairing
-    {
-        get => showPairing;
-        private set => SetProperty(ref showPairing, value);
-    }
-
-    /// <summary>Pure rule: show pairing whenever there is no device-identity snapshot yet.</summary>
-    public static bool ShouldShowPairing(PublisherSnapshot? snapshot) =>
-        snapshot is null || !snapshot.IsAuthenticated;
 
     public bool ClearLogsArmed
     {
@@ -200,7 +187,6 @@ public sealed class MainWindowViewModel : ViewModelBase
     private void Apply(PublisherSnapshot? state, WebRtcPublisherDiagnostics? diagnostics, bool forceRelay)
     {
         Shell.Update(state, diagnostics, forceRelay);
-        ShowPairing = ShouldShowPairing(state);
         // The runtime only creates its PairingViewModel once device-identity bootstrap
         // succeeds (PublisherRuntime.InitializeDeviceIdentityAsync), so this stays null —
         // and the pairing view renders its disconnected placeholder — until then.
@@ -225,15 +211,19 @@ public sealed class MainWindowViewModel : ViewModelBase
         workflow is null ? Task.CompletedTask : action(workflow);
 
     /// <summary>
-    /// Signs out (issue #26 follow-up): clears the local device identity and, once
-    /// signed out, immediately re-bootstraps a fresh one so the pairing surface shows
-    /// a new QR/challenge right away rather than requiring an app restart. A backend
-    /// hiccup during re-bootstrap simply leaves the pairing surface for a manual retry.
+    /// Signs out (issue #26 follow-up): clears the local device identity, switches the shell
+    /// to the Pairing nav page so the user actually sees it (rather than relying on a
+    /// snapshot-derived gate that a fast automatic re-bootstrap could flip straight back to
+    /// the dashboard before it ever rendered), and then immediately re-bootstraps a fresh
+    /// device identity so the pairing surface shows a new QR/challenge right away rather than
+    /// requiring an app restart. A backend hiccup during re-bootstrap simply leaves the
+    /// pairing page for a manual retry. Internal so tests can drive it directly (issue #26).
     /// </summary>
-    private async Task LogoutAsync()
+    internal async Task LogoutAsync()
     {
         if (workflow is null) return;
         await workflow.LogoutAsync();
+        SelectedNavigation = Navigation.Single(item => item.Key == PageKey.Pairing);
         if (runtime is not null)
         {
             try { await runtime.InitializeDeviceIdentityAsync(); }
