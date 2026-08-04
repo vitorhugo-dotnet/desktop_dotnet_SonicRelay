@@ -246,6 +246,42 @@ public sealed class DeviceIdentitySessionTests
     }
 
     [Fact]
+    public async Task Reset_clears_the_credential_and_lifts_the_invalidation_latch()
+    {
+        var store = new MemoryDeviceCredentialStore(StoredCredential());
+        var api = new StubDeviceIdentityApiClient
+        {
+            BootstrapResponse = new BootstrapDeviceResponse(DeviceId, "replacement-secret", 2),
+            TokenOutcomes = new Queue<object>(
+            [
+                new ApiClientException(ApiErrorKind.Unauthorized, "credential rejected", HttpStatusCode.Unauthorized),
+                Token("replacement-access")
+            ])
+        };
+        var session = CreateSession(api, store, new FakeTimeProvider(Now));
+        await Assert.ThrowsAsync<ApiClientException>(() => session.GetAccessTokenAsync());
+        await Assert.ThrowsAsync<ApiClientException>(() => session.GetAccessTokenAsync());
+
+        await session.ResetAsync();
+        var token = await session.GetAccessTokenAsync();
+
+        Assert.Equal("replacement-access", token);
+        Assert.Equal(1, api.BootstrapCalls);
+    }
+
+    [Fact]
+    public async Task Reset_deletes_a_healthy_stored_credential_too()
+    {
+        var store = new MemoryDeviceCredentialStore(StoredCredential());
+        var session = CreateSession(new StubDeviceIdentityApiClient(), store);
+
+        await session.ResetAsync();
+
+        Assert.Null(store.Credential);
+        Assert.Equal(1, store.DeleteCalls);
+    }
+
+    [Fact]
     public async Task Network_failure_retains_the_stored_credential_without_bootstrapping()
     {
         var credential = StoredCredential();

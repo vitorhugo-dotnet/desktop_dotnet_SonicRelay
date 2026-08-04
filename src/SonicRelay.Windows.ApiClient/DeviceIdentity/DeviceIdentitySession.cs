@@ -82,6 +82,26 @@ public sealed class DeviceIdentitySession : IDeviceAccessTokenProvider, IDisposa
             TaskScheduler.Default);
     }
 
+    /// <summary>
+    /// Forgets this device's identity: clears the cached token, deletes the persisted
+    /// credential and lifts the invalidation latch a prior rejected credential set
+    /// (<see cref="ThrowIfIdentityInvalidated"/>), which otherwise sticks for the
+    /// lifetime of this instance. Without this, a rejected/stale device credential
+    /// leaves the publisher unable to bootstrap or pair again until the app restarts.
+    /// </summary>
+    public async Task ResetAsync(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ClearCachedToken();
+        var delete = await credentialStore.DeleteAsync(cancellationToken);
+        if (!delete.Succeeded)
+        {
+            throw StorageFailure("cleared");
+        }
+
+        Volatile.Write(ref identityInvalidated, 0);
+    }
+
     public bool IsTransientFailure(Exception exception) =>
         exception is ApiClientException
         {

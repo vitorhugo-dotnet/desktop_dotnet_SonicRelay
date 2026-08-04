@@ -81,6 +81,40 @@ public sealed class PublisherWorkflowTests
     }
 
     [Fact]
+    public async Task LogoutEndsTheActiveSessionAndForgetsTheDeviceIdentity()
+    {
+        await using var fixture = new DeviceIdentityFixture();
+        await fixture.Workflow.InitializeDeviceIdentityAsync();
+        await fixture.Workflow.CreateSessionAsync();
+        await fixture.Workflow.StartAudioAsync();
+
+        await fixture.Workflow.LogoutAsync();
+
+        Assert.True(fixture.Audio.StopCalled);
+        Assert.True(fixture.Signaling.CloseCalled);
+        Assert.Equal(fixture.Sessions.Created.Id, fixture.Sessions.EndedId);
+        Assert.Equal(1, fixture.Identity.ResetCalls);
+        Assert.False(fixture.Workflow.State.IsAuthenticated);
+        Assert.Null(fixture.Workflow.State.DeviceId);
+        Assert.Null(fixture.Workflow.State.SessionId);
+        Assert.Null(fixture.Workflow.State.SessionCode);
+    }
+
+    [Fact]
+    public async Task LogoutWithNoActiveSessionStillForgetsTheDeviceIdentity()
+    {
+        await using var fixture = new DeviceIdentityFixture();
+        await fixture.Workflow.InitializeDeviceIdentityAsync();
+
+        await fixture.Workflow.LogoutAsync();
+
+        Assert.False(fixture.Signaling.CloseCalled);
+        Assert.Equal(1, fixture.Identity.ResetCalls);
+        Assert.False(fixture.Workflow.State.IsAuthenticated);
+        Assert.Null(fixture.Workflow.State.DeviceId);
+    }
+
+    [Fact]
     public async Task RejectedDeviceCredentialClearsDeviceIdentityInsteadOfClaimingSuccess()
     {
         await using var fixture = new DeviceIdentityFixture();
@@ -155,6 +189,7 @@ public sealed class PublisherWorkflowTests
     private sealed class FakeDeviceIdentity : IDeviceAccessTokenProvider
     {
         public int TokenRequests { get; private set; }
+        public int ResetCalls { get; private set; }
 
         public Task<string> GetAccessTokenAsync(
             bool forceRefresh = false,
@@ -162,6 +197,12 @@ public sealed class PublisherWorkflowTests
         {
             TokenRequests++;
             return Task.FromResult("device-token");
+        }
+
+        public Task ResetAsync(CancellationToken cancellationToken = default)
+        {
+            ResetCalls++;
+            return Task.CompletedTask;
         }
     }
 
