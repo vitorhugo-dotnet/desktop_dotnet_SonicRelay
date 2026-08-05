@@ -146,6 +146,55 @@ public sealed class PublisherWorkflowTests
     }
 
     [Fact]
+    public async Task Unpair_attempts_every_active_pairing_even_if_one_in_the_middle_fails()
+    {
+        var first = new PairingResponse(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "active", DateTimeOffset.UtcNow, null);
+        var second = new PairingResponse(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "active", DateTimeOffset.UtcNow, null);
+        var third = new PairingResponse(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "active", DateTimeOffset.UtcNow, null);
+        var pairings = new FakePairingApiClient { Pairings = [first, second, third] };
+        pairings.ThrowOnRevokeIds.Add(second.PairingId);
+        var workflow = CreateWorkflow(pairings);
+        await workflow.InitializeDeviceIdentityAsync();
+
+        await workflow.UnpairAsync();
+
+        // The middle revocation throwing must not skip the third pairing: both first and
+        // third are still attempted (and succeed), only the middle one fails.
+        Assert.Contains(first.PairingId, pairings.RevokedIds);
+        Assert.Contains(third.PairingId, pairings.RevokedIds);
+        Assert.DoesNotContain(second.PairingId, pairings.RevokedIds);
+        Assert.Equal(2, pairings.RevokedIds.Count);
+
+        // The local identity is still cleared regardless of the partial failure.
+        Assert.False(workflow.State.IsAuthenticated);
+        Assert.Null(workflow.State.DeviceId);
+
+        // The log names the partial outcome rather than implying total success or total failure.
+        Assert.Contains(workflow.State.ActivityLog, line =>
+            line.Contains("could not be revoked", StringComparison.Ordinal) &&
+            line.Contains('2', StringComparison.Ordinal) &&
+            line.Contains('1', StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Unpair_revokes_every_active_pairing_not_just_the_first()
+    {
+        var first = new PairingResponse(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "active", DateTimeOffset.UtcNow, null);
+        var second = new PairingResponse(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "active", DateTimeOffset.UtcNow, null);
+        var third = new PairingResponse(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "active", DateTimeOffset.UtcNow, null);
+        var pairings = new FakePairingApiClient { Pairings = [first, second, third] };
+        var workflow = CreateWorkflow(pairings);
+        await workflow.InitializeDeviceIdentityAsync();
+
+        await workflow.UnpairAsync();
+
+        Assert.Equal(3, pairings.RevokedIds.Count);
+        Assert.Contains(first.PairingId, pairings.RevokedIds);
+        Assert.Contains(second.PairingId, pairings.RevokedIds);
+        Assert.Contains(third.PairingId, pairings.RevokedIds);
+    }
+
+    [Fact]
     public async Task RejectedDeviceCredentialClearsDeviceIdentityInsteadOfClaimingSuccess()
     {
         await using var fixture = new DeviceIdentityFixture();
@@ -322,6 +371,7 @@ public sealed class PublisherWorkflowTests
         public IReadOnlyList<PairingResponse> Pairings { get; set; } = [];
         public List<Guid> RevokedIds { get; } = [];
         public bool ThrowOnList { get; set; }
+        public HashSet<Guid> ThrowOnRevokeIds { get; } = [];
 
         public Task<CreatePairingChallengeResponse> CreatePairingChallengeAsync(CancellationToken cancellationToken = default) =>
             throw new NotSupportedException("Not exercised by PublisherWorkflow.");
@@ -333,6 +383,11 @@ public sealed class PublisherWorkflowTests
 
         public Task RevokePairingAsync(Guid pairingId, CancellationToken cancellationToken = default)
         {
+            if (ThrowOnRevokeIds.Contains(pairingId))
+            {
+                return Task.FromException(new InvalidOperationException("Revocation failed."));
+            }
+
             RevokedIds.Add(pairingId);
             return Task.CompletedTask;
         }

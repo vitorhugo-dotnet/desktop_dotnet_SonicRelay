@@ -156,9 +156,24 @@ public sealed class PublisherWorkflow : IAsyncDisposable
                 try
                 {
                     var active = await pairings.ListPairingsAsync(deviceId, token);
+                    var revoked = 0;
+                    var failed = 0;
                     foreach (var pairing in active.Where(x => x.Status == "active"))
                     {
-                        await pairings.RevokePairingAsync(pairing.PairingId, token);
+                        try
+                        {
+                            await pairings.RevokePairingAsync(pairing.PairingId, token);
+                            revoked++;
+                        }
+                        catch (Exception exception) when (exception is not OperationCanceledException)
+                        {
+                            failed++;
+                        }
+                    }
+
+                    if (failed > 0)
+                    {
+                        AddLog($"Pairings could not be fully revoked: {revoked} revoked, {failed} could not be revoked.");
                     }
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException)
