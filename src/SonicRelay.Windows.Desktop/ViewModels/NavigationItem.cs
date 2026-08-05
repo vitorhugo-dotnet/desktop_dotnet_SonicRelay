@@ -4,9 +4,9 @@ namespace SonicRelay.Windows.Desktop.ViewModels;
 public enum PageKey { Dashboard, Pairing, Audio, Session, Diagnostics, Settings }
 
 /// <summary>
-/// A sidebar navigation entry. The Dashboard, Session and Diagnostics surfaces are live;
-/// Audio and Settings are declared but disabled placeholders for later slices (they need
-/// device enumeration and the preference stores — issue #32).
+/// A sidebar navigation entry. All destinations — Dashboard, Pairing, Audio, Session,
+/// Diagnostics and Settings — are live and always enabled; Pairing in particular is an
+/// ordinary, always-reachable nav page rather than a full-shell gate (issue #26 follow-up).
 /// </summary>
 public sealed class NavigationItem : ViewModelBase
 {

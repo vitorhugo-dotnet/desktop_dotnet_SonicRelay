@@ -144,8 +144,12 @@ public sealed class SettingsViewModelRelaySettingsTests
     public async Task Saving_the_turn_uri_sends_it_as_a_single_element_list()
     {
         var api = new StubRelaySettingsApiClient(
+            get: new RelaySettingsResponse("automatic", [], false),
             update: new RelaySettingsResponse("automatic", ["turn:new.example.com:3478"], false));
         var vm = MakeConnectedViewModel(api);
+        // SaveTurnUriAsync refuses to run until a real server value has been fetched at least
+        // once (RelaySettingsLoaded) — see the coturn-wipe-guard tests below.
+        await vm.RefreshRelaySettingsAsync();
         vm.TurnUriInput = "turn:new.example.com:3478";
 
         await vm.SaveTurnUriAsync();
@@ -200,6 +204,91 @@ public sealed class SettingsViewModelRelaySettingsTests
         Assert.Equal(1, api.GetCallCount);
     }
 
+    [Fact]
+    public async Task An_unrecognized_relay_mode_from_the_server_does_not_crash_and_leaves_state_unchanged()
+    {
+        // Regression test: RelayModes is a closed 3-value set owned by a separately-versioned
+        // backend repo that could add a fourth mode someday; that must surface as an error, not
+        // an ArgumentException thrown out of RelayPreferenceStore.PersistAsync past this method's
+        // callers (an async void RelayCommand.Execute with no catch — an unhandled exception
+        // there crashes the whole process).
+        var api = new StubRelaySettingsApiClient(
+            update: new RelaySettingsResponse("bogus-mode", ["turn:should-not-apply.example.com:3478"], false));
+        var vm = MakeConnectedViewModel(api);
+        var previousRelayMode = vm.RelayMode;
+        var previousTurnUriInput = vm.TurnUriInput;
+
+        var exception = await Record.ExceptionAsync(vm.SaveRelayModeAsync);
+
+        Assert.Null(exception);
+        Assert.Equal(previousRelayMode, vm.RelayMode);
+        Assert.Equal(previousTurnUriInput, vm.TurnUriInput);
+        Assert.NotNull(vm.RelaySettingsError);
+    }
+
+    [Fact]
+    public async Task A_null_turn_uris_list_from_the_server_is_treated_as_empty_not_a_crash()
+    {
+        // System.Text.Json deserialization can leave a non-nullable list property null if the
+        // backend ever omits the field from the JSON body; .Count on that would NullReferenceException.
+        var api = new StubRelaySettingsApiClient(get: new RelaySettingsResponse("automatic", null!, false));
+        var vm = MakeConnectedViewModel(api);
+
+        var exception = await Record.ExceptionAsync(vm.RefreshRelaySettingsAsync);
+
+        Assert.Null(exception);
+        Assert.Equal("", vm.TurnUriInput);
+        Assert.Null(vm.RelaySettingsError);
+    }
+
+    [Fact]
+    public async Task An_unexpected_exception_from_the_api_client_does_not_escape()
+    {
+        var api = new ThrowingRelaySettingsApiClient();
+        var vm = MakeConnectedViewModel(api);
+
+        var exception = await Record.ExceptionAsync(vm.SaveRelayModeAsync);
+
+        Assert.Null(exception);
+        Assert.NotNull(vm.RelaySettingsError);
+    }
+
+    [Fact]
+    public async Task Saving_the_coturn_url_is_blocked_until_relay_settings_have_loaded_successfully()
+    {
+        var api = new StubRelaySettingsApiClient();
+        var vm = MakeConnectedViewModel(api);
+        vm.TurnUriInput = "turn:should-not-be-saved.example.com:3478";
+        Assert.False(vm.SaveTurnUriCommand.CanExecute(null));
+
+        await vm.SaveTurnUriAsync();
+
+        Assert.Null(api.LastUpdateRequest);
+        Assert.NotNull(vm.RelaySettingsError);
+    }
+
+    [Fact]
+    public async Task A_failed_auto_refresh_still_blocks_saving_the_coturn_url()
+    {
+        // Closes the loop on the coturn-wipe fix: the earlier fix made UpdateAuthentication
+        // auto-fetch on the success path, but a transient failure (backend briefly unreachable,
+        // 401, timeout) left TurnUriInput blank-but-still-saveable, with only an easy-to-miss
+        // error message as the only defense.
+        var api = new FlakyGetRelaySettingsApiClient();
+        var vm = MakeConnectedViewModel(api);
+
+        vm.UpdateAuthentication(true);
+
+        Assert.True(vm.HasDeviceIdentity);
+        Assert.NotNull(vm.RelaySettingsError);
+        Assert.False(vm.SaveTurnUriCommand.CanExecute(null));
+
+        vm.TurnUriInput = "turn:should-not-be-saved.example.com:3478";
+        await vm.SaveTurnUriAsync();
+
+        Assert.Null(api.LastUpdateRequest);
+    }
+
     private static SettingsViewModel MakeConnectedViewModel(IRelaySettingsApiClient api) =>
         new(
             "https://backend.example.test/",
@@ -226,6 +315,34 @@ public sealed class SettingsViewModelRelaySettingsTests
         {
             LastUpdateRequest = request;
             return Task.FromResult(update ?? new RelaySettingsResponse("automatic", [], false));
+        }
+    }
+
+    /// <summary>Throws something other than <c>ApiClientException</c> from every call, to prove
+    /// the widened <c>catch (Exception exception) when (exception is not OutOfMemoryException)</c>
+    /// clauses catch it too, not just the narrower API-specific exception type.</summary>
+    private sealed class ThrowingRelaySettingsApiClient : IRelaySettingsApiClient
+    {
+        public Task<RelaySettingsResponse> GetAsync(CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("simulated unexpected failure");
+
+        public Task<RelaySettingsResponse> UpdateAsync(UpdateRelaySettingsRequest request, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("simulated unexpected failure");
+    }
+
+    /// <summary>GetAsync always fails; UpdateAsync tracks whether it was ever called (it must
+    /// not be, while relay settings have never successfully loaded).</summary>
+    private sealed class FlakyGetRelaySettingsApiClient : IRelaySettingsApiClient
+    {
+        public UpdateRelaySettingsRequest? LastUpdateRequest { get; private set; }
+
+        public Task<RelaySettingsResponse> GetAsync(CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("simulated backend outage");
+
+        public Task<RelaySettingsResponse> UpdateAsync(UpdateRelaySettingsRequest request, CancellationToken cancellationToken = default)
+        {
+            LastUpdateRequest = request;
+            return Task.FromResult(new RelaySettingsResponse("automatic", [], false));
         }
     }
 }
