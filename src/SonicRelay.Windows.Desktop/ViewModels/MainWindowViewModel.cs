@@ -97,6 +97,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public string PageTitle => CurrentPage switch
     {
+        PageKey.Pairing => "Pairing",
         PageKey.Audio => "Audio",
         PageKey.Session => "Session",
         PageKey.Diagnostics => "Diagnostics",
@@ -106,6 +107,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public string PageSubtitle => CurrentPage switch
     {
+        PageKey.Pairing => "Pair this device with the SonicRelay app",
         PageKey.Audio => "Choose the system output to capture",
         PageKey.Session => "Broadcast session details and controls",
         PageKey.Diagnostics => "Publisher event log",

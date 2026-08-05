@@ -91,22 +91,14 @@ public sealed class SettingsViewModel : ViewModelBase
     }
 
     /// <summary>Validation/save error from the last <see cref="SaveBackendUrlAsync"/> attempt,
-    /// or null once a save succeeds.</summary>
+    /// or null once a save succeeds. Bound via <c>Converter={x:Static ObjectConverters.IsNotNull}</c>
+    /// in XAML rather than a bindable bool wrapper — see <see cref="RelaySettingsError"/> for the
+    /// same idiom, kept consistent within this view.</summary>
     public string? BackendUrlError
     {
         get => backendUrlError;
-        private set
-        {
-            if (SetProperty(ref backendUrlError, value))
-                RaisePropertyChanged(nameof(HasBackendUrlError));
-        }
+        private set => SetProperty(ref backendUrlError, value);
     }
-
-    /// <summary>Bindable presence check, following the same pattern as
-    /// <see cref="MainWindowViewModel.HasDiagnosticsActionMessage"/> rather than an Avalonia
-    /// converter (there is no existing null/bool-to-visibility converter wired up anywhere in
-    /// this codebase to reuse).</summary>
-    public bool HasBackendUrlError => backendUrlError is not null;
 
     /// <summary>No-op until the connected overload replaces it; mirrors the always-live
     /// <see cref="RelayCommand"/> fields on <see cref="MainWindowViewModel"/> — never null.</summary>
@@ -168,9 +160,25 @@ public sealed class SettingsViewModel : ViewModelBase
         private set => SetProperty(ref hasDeviceIdentity, value);
     }
 
-    /// <summary>Called by <see cref="MainWindowViewModel.Apply"/> whenever the attached
-    /// runtime's snapshot changes, to keep <see cref="HasDeviceIdentity"/> current.</summary>
-    public void UpdateAuthentication(bool value) => HasDeviceIdentity = value;
+    /// <summary>
+    /// Called by <see cref="MainWindowViewModel.Apply"/> whenever the attached runtime's
+    /// snapshot changes, to keep <see cref="HasDeviceIdentity"/> current. On the false-to-true
+    /// transition (device identity just became available, which is also when the coturn field
+    /// first becomes visible) this kicks off a fire-and-forget
+    /// <see cref="RefreshRelaySettingsAsync"/> — otherwise <see cref="TurnUriInput"/> stays at
+    /// its unfetched "" default, which looks indistinguishable from "no override configured"
+    /// and a stray "Save coturn URL" click would silently wipe the backend's global TURN
+    /// override for every paired device.
+    /// </summary>
+    public void UpdateAuthentication(bool value)
+    {
+        var wasAuthenticated = hasDeviceIdentity;
+        HasDeviceIdentity = value;
+        if (!wasAuthenticated && value)
+        {
+            _ = RefreshRelaySettingsAsync();
+        }
+    }
 
     /// <summary>No-op until the connected overload replaces it; mirrors <see cref="SaveBackendUrlCommand"/>.</summary>
     public RelayCommand RefreshRelaySettingsCommand { get; } = new(() => Task.CompletedTask);

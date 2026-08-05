@@ -91,6 +91,19 @@ public sealed class MainWindowViewModelStateTests
         Assert.False(vm.IsDashboard);
     }
 
+    [Fact]
+    public void Selecting_pairing_updates_the_top_bar_title()
+    {
+        // Regression test: PageTitle/PageSubtitle had no PageKey.Pairing arm, so the top bar
+        // silently kept showing "Dashboard" while the pairing surface was actually displayed.
+        var vm = new MainWindowViewModel();
+
+        vm.SelectedNavigation = vm.Navigation.Single(item => item.Key == PageKey.Pairing);
+
+        Assert.Equal("Pairing", vm.PageTitle);
+        Assert.NotEqual("Live status of the publisher transmission", vm.PageSubtitle);
+    }
+
     private sealed class FakeAudio : IAudioCaptureService
     {
         public AudioCaptureState State => AudioCaptureState.Stopped;

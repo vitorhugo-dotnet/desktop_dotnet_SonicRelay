@@ -165,6 +165,41 @@ public sealed class SettingsViewModelRelaySettingsTests
         Assert.True(vm.HasDeviceIdentity);
     }
 
+    [Fact]
+    public void Device_identity_becoming_available_auto_refreshes_relay_settings()
+    {
+        // Regression test: TurnUriInput starts as "" and SaveTurnUriAsync maps a blank input to
+        // an empty list, so if the coturn field became visible without ever being populated, the
+        // very first "Save coturn URL" click would silently wipe the backend's global TURN
+        // override for every paired device. UpdateAuthentication(true) — the false-to-true
+        // transition, i.e. the moment the coturn field becomes visible — must fetch the real
+        // server value first.
+        var api = new StubRelaySettingsApiClient(
+            get: new RelaySettingsResponse("forceRelay", ["turn:auto.example.com:3478"], true));
+        var vm = MakeConnectedViewModel(api);
+        Assert.Equal("", vm.TurnUriInput);
+
+        vm.UpdateAuthentication(true);
+
+        Assert.Equal("forceRelay", vm.RelayMode);
+        Assert.Equal("turn:auto.example.com:3478", vm.TurnUriInput);
+        Assert.Null(vm.RelaySettingsError);
+    }
+
+    [Fact]
+    public void Repeated_true_updates_do_not_refresh_again()
+    {
+        var api = new StubRelaySettingsApiClient(
+            get: new RelaySettingsResponse("forceRelay", ["turn:auto.example.com:3478"], true));
+        var vm = MakeConnectedViewModel(api);
+        vm.UpdateAuthentication(true);
+        Assert.Equal(1, api.GetCallCount);
+
+        vm.UpdateAuthentication(true);
+
+        Assert.Equal(1, api.GetCallCount);
+    }
+
     private static SettingsViewModel MakeConnectedViewModel(IRelaySettingsApiClient api) =>
         new(
             "https://backend.example.test/",
@@ -179,9 +214,13 @@ public sealed class SettingsViewModelRelaySettingsTests
         RelaySettingsResponse? get = null, RelaySettingsResponse? update = null) : IRelaySettingsApiClient
     {
         public UpdateRelaySettingsRequest? LastUpdateRequest { get; private set; }
+        public int GetCallCount { get; private set; }
 
-        public Task<RelaySettingsResponse> GetAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult(get ?? new RelaySettingsResponse("automatic", [], false));
+        public Task<RelaySettingsResponse> GetAsync(CancellationToken cancellationToken = default)
+        {
+            GetCallCount++;
+            return Task.FromResult(get ?? new RelaySettingsResponse("automatic", [], false));
+        }
 
         public Task<RelaySettingsResponse> UpdateAsync(UpdateRelaySettingsRequest request, CancellationToken cancellationToken = default)
         {

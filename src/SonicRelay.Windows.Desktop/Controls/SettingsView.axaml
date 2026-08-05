@@ -22,12 +22,12 @@
               <Button Content="Save backend URL" Command="{Binding SaveBackendUrlCommand}" />
             </StackPanel>
             <TextBlock Classes="metric-label" Foreground="{DynamicResource Sonic.DangerBrush}"
-                       IsVisible="{Binding HasBackendUrlError}"
+                       IsVisible="{Binding BackendUrlError, Converter={x:Static ObjectConverters.IsNotNull}}"
                        Text="{Binding BackendUrlError}" TextWrapping="Wrap" />
           </StackPanel>
-          <StackPanel Spacing="4">
+          <StackPanel Spacing="4" IsVisible="{Binding HasDeviceIdentity}">
             <TextBlock Text="Relay mode" Foreground="{DynamicResource Sonic.TextPrimaryBrush}" />
-            <TextBlock Classes="metric-label" Text="Automatic falls back to relay only if a direct path fails." />
+            <TextBlock Classes="metric-label" Text="Automatic falls back to relay only if a direct path fails. Applies to every device paired with this backend." />
             <ComboBox ItemsSource="{Binding RelayModeOptions}" SelectedItem="{Binding RelayMode}"
                       AutomationProperties.Name="Relay mode" />
             <Button Content="Save relay mode" Command="{Binding SaveRelayModeCommand}" Margin="0,4,0,0" />
