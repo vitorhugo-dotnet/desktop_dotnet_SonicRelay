@@ -3,10 +3,11 @@ using System.Text.Json;
 namespace SonicRelay.Windows.Core.Configuration;
 
 /// <summary>
-/// Persists the user's "force relay (TURN only)" ICE preference. Kept in a small
-/// file next to the publisher configuration so a settings toggle can update it at
-/// runtime without rewriting the whole app configuration. The current value is
-/// cached in memory; the WebRTC factory reads it when creating each connection.
+/// Last-known-good cache of the server-synced <see cref="RelayMode"/> (issue #26 follow-up —
+/// this used to be the sole source of truth for a local-only "force relay" boolean; the real
+/// source of truth is now the backend's /api/settings/relay, and this store only exists so
+/// the app has something sensible to render before the first fetch completes). The WebRTC
+/// factory reads <see cref="ForceRelay"/> live via a delegate, unchanged.
 /// </summary>
 public sealed class RelayPreferenceStore
 {
@@ -19,36 +20,59 @@ public sealed class RelayPreferenceStore
     public RelayPreferenceStore(string? path = null)
     {
         _path = path ?? DefaultPath;
-        ForceRelay = Load();
+        RelayMode = Load();
     }
 
-    /// <summary>When true, ICE is restricted to relay (TURN) candidates.</summary>
-    public bool ForceRelay { get; private set; }
+    /// <summary>One of <see cref="RelayModes"/>; never any other value.</summary>
+    public string RelayMode { get; private set; }
 
-    public async Task SetForceRelayAsync(bool value, CancellationToken cancellationToken = default)
+    /// <summary>Restrict ICE to relay (TURN) candidates; read live by the WebRTC factory.</summary>
+    public bool ForceRelay => RelayMode == RelayModes.ForceRelay;
+
+    /// <summary>A user changed the mode from Settings; the caller is expected to have already
+    /// confirmed this with the server (PUT /api/settings/relay) before calling this — it does
+    /// not itself talk to the network.</summary>
+    public Task SetRelayModeAsync(string mode, CancellationToken cancellationToken = default) =>
+        PersistAsync(mode, cancellationToken);
+
+    /// <summary>A background/opened-Settings/pre-session fetch confirmed the server's current
+    /// value; refresh the local cache to match. Same persistence as <see cref="SetRelayModeAsync"/>
+    /// — the separate name only documents intent at call sites.</summary>
+    public Task ApplyFetchedRelayModeAsync(string mode, CancellationToken cancellationToken = default) =>
+        PersistAsync(mode, cancellationToken);
+
+    private async Task PersistAsync(string mode, CancellationToken cancellationToken)
     {
-        ForceRelay = value;
+        if (!RelayModes.IsValid(mode))
+        {
+            throw new ArgumentException($"Unknown relay mode '{mode}'.", nameof(mode));
+        }
+
+        RelayMode = mode;
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
         await File.WriteAllTextAsync(
             _path,
-            JsonSerializer.Serialize(new PreferencesDocument(value), JsonOptions),
+            JsonSerializer.Serialize(new PreferencesDocument(mode, null), JsonOptions),
             cancellationToken);
     }
 
-    private bool Load()
+    private string Load()
     {
         try
         {
-            if (!File.Exists(_path)) return false;
+            if (!File.Exists(_path)) return RelayModes.Automatic;
             var document = JsonSerializer.Deserialize<PreferencesDocument>(File.ReadAllText(_path), JsonOptions);
-            return document?.ForceRelay ?? false;
+            if (document?.RelayMode is { } mode && RelayModes.IsValid(mode)) return mode;
+            // Migrate the pre-existing boolean-only file shape (issue #26 predecessor).
+            if (document?.ForceRelay is true) return RelayModes.ForceRelay;
+            return RelayModes.Automatic;
         }
         catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException)
         {
-            // A missing/corrupt preferences file must never block startup; default to direct.
-            return false;
+            // A missing/corrupt preferences file must never block startup; default to automatic.
+            return RelayModes.Automatic;
         }
     }
 
-    private sealed record PreferencesDocument(bool ForceRelay);
+    private sealed record PreferencesDocument(string? RelayMode, bool? ForceRelay);
 }

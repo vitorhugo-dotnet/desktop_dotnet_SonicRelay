@@ -11,8 +11,8 @@ namespace SonicRelay.Windows.Desktop.ViewModels;
 /// into <see cref="PublisherWorkflow"/> calls once a runtime is attached. With no runtime
 /// (the standalone preview launch) the actions are disabled and the shell renders the
 /// representative snapshot, so the layout and design system stay verifiable without a
-/// backend. Attaching a live runtime shows the pairing surface until the device identity
-/// bootstraps, then the dashboard (issue #26).
+/// backend. Pairing is an ordinary, always-reachable nav page like Audio/Session/Settings —
+/// not a full-shell gate keyed off device-identity bootstrap (issue #26 follow-up).
 /// </summary>
 public sealed class MainWindowViewModel : ViewModelBase
 {
@@ -21,7 +21,6 @@ public sealed class MainWindowViewModel : ViewModelBase
     private IWebRtcPublisher? webRtc;
     private PublisherSnapshot? snapshot;
     private PairingViewModel? pairing;
-    private bool showPairing = true;
     private NavigationItem selectedNavigation;
     private bool clearLogsArmed;
     private string? diagnosticsActionMessage;
@@ -31,6 +30,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         Navigation =
         [
             new NavigationItem(PageKey.Dashboard, "◧", "Dashboard"),
+            new NavigationItem(PageKey.Pairing, "⇄", "Pairing"),
             new NavigationItem(PageKey.Audio, "♪", "Audio"),
             new NavigationItem(PageKey.Session, "⧉", "Session"),
             new NavigationItem(PageKey.Diagnostics, "⚙", "Diagnostics"),
@@ -77,17 +77,29 @@ public sealed class MainWindowViewModel : ViewModelBase
             if (value is null || !SetProperty(ref selectedNavigation, value)) return;
             RaisePropertyChanged(nameof(CurrentPage));
             RaisePropertyChanged(nameof(IsDashboard));
+            RaisePropertyChanged(nameof(IsPairing));
             RaisePropertyChanged(nameof(IsSession));
             RaisePropertyChanged(nameof(IsDiagnostics));
             RaisePropertyChanged(nameof(IsAudio));
             RaisePropertyChanged(nameof(IsSettings));
             RaisePropertyChanged(nameof(PageTitle));
             RaisePropertyChanged(nameof(PageSubtitle));
+
+            // "Settings page opened" is one of the relay-settings sync trigger points (design
+            // spec): without this, pairing once, changing the relay mode/coturn URL from another
+            // app, then opening Settings here later would show a stale value and silently revert
+            // the other app's change on the next save. Best-effort, fire-and-forget — matching
+            // every other relay-settings refresh in this plan.
+            if (value.Key == PageKey.Settings && Settings.HasDeviceIdentity)
+            {
+                _ = Settings.RefreshRelaySettingsAsync();
+            }
         }
     }
 
     public PageKey CurrentPage => selectedNavigation.Key;
     public bool IsDashboard => CurrentPage == PageKey.Dashboard;
+    public bool IsPairing => CurrentPage == PageKey.Pairing;
     public bool IsSession => CurrentPage == PageKey.Session;
     public bool IsDiagnostics => CurrentPage == PageKey.Diagnostics;
     public bool IsAudio => CurrentPage == PageKey.Audio;
@@ -95,6 +107,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public string PageTitle => CurrentPage switch
     {
+        PageKey.Pairing => "Pairing",
         PageKey.Audio => "Audio",
         PageKey.Session => "Session",
         PageKey.Diagnostics => "Diagnostics",
@@ -104,27 +117,13 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public string PageSubtitle => CurrentPage switch
     {
+        PageKey.Pairing => "Pair this device with the SonicRelay app",
         PageKey.Audio => "Choose the system output to capture",
         PageKey.Session => "Broadcast session details and controls",
         PageKey.Diagnostics => "Publisher event log",
         PageKey.Settings => "Backend, relay and audio quality",
         _ => "Live status of the publisher transmission",
     };
-
-    /// <summary>
-    /// Whether the pairing surface (rather than the dashboard) should be shown. Derived from
-    /// the snapshot so a successful device-identity bootstrap flips the shell to the
-    /// dashboard automatically.
-    /// </summary>
-    public bool ShowPairing
-    {
-        get => showPairing;
-        private set => SetProperty(ref showPairing, value);
-    }
-
-    /// <summary>Pure rule: show pairing whenever there is no device-identity snapshot yet.</summary>
-    public static bool ShouldShowPairing(PublisherSnapshot? snapshot) =>
-        snapshot is null || !snapshot.IsAuthenticated;
 
     public bool ClearLogsArmed
     {
@@ -180,7 +179,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         Settings = next is null
             ? new SettingsViewModel()
-            : new SettingsViewModel(next.BackendBaseUrl.ToString(), next.RelayPreference, next.AudioQuality);
+            : new SettingsViewModel(next.BackendBaseUrl.ToString(), next.RelayPreference, next.AudioQuality, next.RelaySettingsApi, ChangeBackendUrlAsync);
         Audio = next is null
             ? new AudioPageViewModel()
             : new AudioPageViewModel(next.AudioCapture, next.AudioOutput);
@@ -200,7 +199,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private void Apply(PublisherSnapshot? state, WebRtcPublisherDiagnostics? diagnostics, bool forceRelay)
     {
         Shell.Update(state, diagnostics, forceRelay);
-        ShowPairing = ShouldShowPairing(state);
+        Settings.UpdateAuthentication(state?.HasDeviceIdentity ?? false);
         // The runtime only creates its PairingViewModel once device-identity bootstrap
         // succeeds (PublisherRuntime.InitializeDeviceIdentityAsync), so this stays null —
         // and the pairing view renders its disconnected placeholder — until then.
@@ -225,20 +224,67 @@ public sealed class MainWindowViewModel : ViewModelBase
         workflow is null ? Task.CompletedTask : action(workflow);
 
     /// <summary>
-    /// Signs out (issue #26 follow-up): clears the local device identity and, once
-    /// signed out, immediately re-bootstraps a fresh one so the pairing surface shows
-    /// a new QR/challenge right away rather than requiring an app restart. A backend
-    /// hiccup during re-bootstrap simply leaves the pairing surface for a manual retry.
+    /// Signs out (issue #26 follow-up): clears the local device identity, switches the shell
+    /// to the Pairing nav page so the user actually sees it (rather than relying on a
+    /// snapshot-derived gate that a fast automatic re-bootstrap could flip straight back to
+    /// the dashboard before it ever rendered), and then immediately re-bootstraps a fresh
+    /// device identity so the pairing surface shows a new QR/challenge right away rather than
+    /// requiring an app restart. A backend hiccup during re-bootstrap simply leaves the
+    /// pairing page for a manual retry. Internal so tests can drive it directly (issue #26).
     /// </summary>
-    private async Task LogoutAsync()
+    internal async Task LogoutAsync()
     {
         if (workflow is null) return;
         await workflow.LogoutAsync();
+        SelectedNavigation = Navigation.Single(item => item.Key == PageKey.Pairing);
         if (runtime is not null)
         {
             try { await runtime.InitializeDeviceIdentityAsync(); }
             catch { }
         }
+    }
+
+    /// <summary>
+    /// Saves a new backend URL and reattaches to it live (issue #26 follow-up — a
+    /// <see cref="UserConfigurationLoader.SaveBackendAsync"/> already existed but nothing
+    /// called it, and the old full-shell pairing gate meant Settings itself was unreachable
+    /// whenever the configured backend was bad). Only rolls back to the previous runtime for
+    /// a save/parse/platform failure — an unreachable *new* backend is not rolled back, since
+    /// the always-visible shell (see Task 1) now lets the user just try again from this same
+    /// page, exactly like a bad URL at cold start.
+    /// </summary>
+    internal async Task<string?> ChangeBackendUrlAsync(string rawUrl)
+    {
+        if (!Uri.TryCreate(rawUrl, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
+        {
+            return "Enter a valid http:// or https:// URL.";
+        }
+
+        PublisherRuntime? next;
+        try
+        {
+            await new SonicRelay.Windows.Core.Configuration.UserConfigurationLoader().SaveBackendAsync(uri);
+            next = SonicRelay.Windows.Desktop.DesktopRuntimeFactory.Create(uri);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or SonicRelay.Windows.Core.Configuration.ConfigurationValidationException)
+        {
+            return exception.Message;
+        }
+
+        if (next is null)
+        {
+            return "This platform has no supported publisher runtime.";
+        }
+
+        var previous = runtime;
+        Attach(next);
+        try { await next.InitializeDeviceIdentityAsync(); } catch { }
+        if (previous is not null)
+        {
+            await previous.DisposeAsync();
+        }
+        return null;
     }
 
     private async Task ExportDiagnosticsAsync()
