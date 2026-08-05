@@ -1,5 +1,6 @@
 using SonicRelay.Windows.ApiClient.Settings;
 using SonicRelay.Windows.Audio;
+using SonicRelay.Windows.Core.Configuration;
 using SonicRelay.Windows.Desktop.ViewModels;
 using SonicRelay.Windows.Presentation;
 using SonicRelay.Windows.Signaling;
@@ -46,7 +47,7 @@ public sealed class MainWindowViewModelStateTests
         // succeeds; attaching a freshly created runtime (bootstrap not yet run) must not
         // crash and must leave Pairing null until bootstrap completes (issue #26).
         await using var runtime = PublisherRuntime.Create(
-            new Uri("https://backend.example.test/"), new FakeAudio());
+            new Uri("https://backend.example.test/"), new FakeAudio(), relayPreferenceOverride: CreateTempRelayPreference());
         var vm = new MainWindowViewModel();
 
         vm.Attach(runtime);
@@ -58,7 +59,7 @@ public sealed class MainWindowViewModelStateTests
     public async Task Signing_out_selects_the_pairing_page_even_if_rebootstrap_immediately_succeeds()
     {
         await using var runtime = PublisherRuntime.Create(
-            new Uri("https://backend.example.test/"), new FakeAudio());
+            new Uri("https://backend.example.test/"), new FakeAudio(), relayPreferenceOverride: CreateTempRelayPreference());
         var vm = new MainWindowViewModel();
         vm.Attach(runtime);
         vm.SelectedNavigation = vm.Navigation.Single(item => item.Key == PageKey.Session);
@@ -114,7 +115,8 @@ public sealed class MainWindowViewModelStateTests
         // other app's change on the next save.
         var stub = new StubRelaySettingsApiClient();
         await using var runtime = PublisherRuntime.Create(
-            new Uri("https://backend.example.test/"), new FakeAudio(), relaySettingsApiOverride: stub);
+            new Uri("https://backend.example.test/"), new FakeAudio(),
+            relaySettingsApiOverride: stub, relayPreferenceOverride: CreateTempRelayPreference());
         var vm = new MainWindowViewModel();
         vm.Attach(runtime);
         // Simulate device-identity bootstrap having already completed; this itself triggers one
@@ -132,7 +134,8 @@ public sealed class MainWindowViewModelStateTests
     {
         var stub = new StubRelaySettingsApiClient();
         await using var runtime = PublisherRuntime.Create(
-            new Uri("https://backend.example.test/"), new FakeAudio(), relaySettingsApiOverride: stub);
+            new Uri("https://backend.example.test/"), new FakeAudio(),
+            relaySettingsApiOverride: stub, relayPreferenceOverride: CreateTempRelayPreference());
         var vm = new MainWindowViewModel();
         vm.Attach(runtime);
 
@@ -140,6 +143,16 @@ public sealed class MainWindowViewModelStateTests
 
         Assert.Equal(0, stub.GetCallCount);
     }
+
+    // PublisherRuntime.Create falls back to the real, shared RelayPreferenceStore.DefaultPath
+    // (%LocalAppData%/SonicRelay/WindowsPublisher/preferences.json) when no override is given.
+    // Several tests here trigger a successful relay-settings refresh (via UpdateAuthentication
+    // or a Settings navigation), which really does write through to that store — without this
+    // override, those writes land on the real file and race with any other test/process on
+    // the same machine touching it (this is exactly what made CI flaky: PublisherRuntimeTests
+    // in a different test project independently asserts that file's write time never changes).
+    private static RelayPreferenceStore CreateTempRelayPreference() =>
+        new(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "relay-preferences.json"));
 
     private sealed class StubRelaySettingsApiClient : IRelaySettingsApiClient
     {
