@@ -87,13 +87,17 @@ public sealed class PublisherRuntime : IAsyncDisposable
     /// Linux — issue #32) and, optionally, its own device-credential store and
     /// audio-output preference store (Linux would use Secret Service instead of
     /// DPAPI); omitting either keeps the existing Windows-default behavior.
+    /// <paramref name="relaySettingsApiOverride"/> and <paramref name="relayPreferenceOverride"/>
+    /// exist for tests — the default backend-talking client and the default
+    /// on-disk preferences file are otherwise always used.
     /// </summary>
     public static PublisherRuntime Create(
         Uri backendBaseUrl,
         IAudioCaptureService audioCapture,
         IDeviceCredentialStore? credentialStoreOverride = null,
         AudioOutputPreferenceStore? audioOutputPreferenceOverride = null,
-        IRelaySettingsApiClient? relaySettingsApiOverride = null)
+        IRelaySettingsApiClient? relaySettingsApiOverride = null,
+        RelayPreferenceStore? relayPreferenceOverride = null)
     {
         ArgumentNullException.ThrowIfNull(backendBaseUrl);
         ArgumentNullException.ThrowIfNull(audioCapture);
@@ -127,7 +131,7 @@ public sealed class PublisherRuntime : IAsyncDisposable
         var iceServersProvider = new BackendIceServersProvider(
             new WebRtcApiClient(http, deviceIdentitySession),
             allowGoogleStunDevFallback: AllowGoogleStunDevFallback);
-        var relayPreference = new RelayPreferenceStore();
+        var relayPreference = relayPreferenceOverride ?? new RelayPreferenceStore();
         var relaySettingsApi = relaySettingsApiOverride ?? new RelaySettingsApiClient(http, deviceIdentitySession);
         var audioQuality = new AudioQualityStore();
         var peers = new PeerConnectionManager(

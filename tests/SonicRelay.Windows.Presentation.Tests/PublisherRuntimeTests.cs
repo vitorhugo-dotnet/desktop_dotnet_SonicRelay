@@ -93,21 +93,57 @@ public sealed class PublisherRuntimeRelaySettingsTests
         await using var backend = await FakeSessionBackend.StartAsync();
         var calls = 0;
         var stub = new RecordingRelaySettingsApiClient(() => calls++);
-        await using var runtime = PublisherRuntime.Create(
-            backend.BaseUrl,
-            new FakeAudio(),
-            credentialStoreOverride: new StatefulFakeDeviceCredentialStore(),
-            relaySettingsApiOverride: stub);
+        // Route the refreshed RelayMode to a throwaway temp file rather than the real
+        // %LocalAppData%/SonicRelay/WindowsPublisher/preferences.json — a successful
+        // refresh in this test really does write through RelayPreferenceStore, and
+        // without this override it would clobber a real user's saved relay mode on any
+        // machine that also runs the actual app under the same account (mirrors the
+        // AudioOutputPreferenceStore temp-path pattern used elsewhere in this file).
+        var relayPreferencePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "relay-preferences.json");
+        // Snapshot the real, shared preferences file's state (if any) so we can assert
+        // afterward that this test never touched it — asserting purely on the temp
+        // path wouldn't catch a bug where PublisherRuntime.Create ignored the override
+        // and still wrote to DefaultPath too.
+        var defaultPathExistedBefore = File.Exists(RelayPreferenceStore.DefaultPath);
+        var defaultPathWriteTimeBefore = defaultPathExistedBefore ? File.GetLastWriteTimeUtc(RelayPreferenceStore.DefaultPath) : default;
+        try
+        {
+            var relayPreference = new RelayPreferenceStore(relayPreferencePath);
+            await using var runtime = PublisherRuntime.Create(
+                backend.BaseUrl,
+                new FakeAudio(),
+                credentialStoreOverride: new StatefulFakeDeviceCredentialStore(),
+                relaySettingsApiOverride: stub,
+                relayPreferenceOverride: relayPreference);
 
-        await runtime.InitializeDeviceIdentityAsync();
-        // Signaling connect against the fake backend fails once the session has
-        // already been created and its id recorded (see the type-level comment
-        // above); that failure is expected and irrelevant to this assertion.
-        // PublisherWorkflow swallows the failure internally (ExecuteAsync records
-        // it as State.ErrorMessage rather than throwing), so no try/catch is needed.
-        await runtime.Workflow.CreateSessionAsync();
+            await runtime.InitializeDeviceIdentityAsync();
+            // Signaling connect against the fake backend fails once the session has
+            // already been created and its id recorded (see the type-level comment
+            // above); that failure is expected and irrelevant to this assertion.
+            // PublisherWorkflow swallows the failure internally (ExecuteAsync records
+            // it as State.ErrorMessage rather than throwing), so no try/catch is needed.
+            await runtime.Workflow.CreateSessionAsync();
 
-        Assert.Equal(1, calls);
+            Assert.Equal(1, calls);
+            // Confirms the refresh actually persisted through the temp-path override
+            // (not silently to DefaultPath) and that RelayPreference picked up the
+            // fetched mode.
+            Assert.True(File.Exists(relayPreferencePath));
+            Assert.Equal("automatic", relayPreference.RelayMode);
+            Assert.Equal(defaultPathExistedBefore, File.Exists(RelayPreferenceStore.DefaultPath));
+            if (defaultPathExistedBefore)
+            {
+                Assert.Equal(defaultPathWriteTimeBefore, File.GetLastWriteTimeUtc(RelayPreferenceStore.DefaultPath));
+            }
+        }
+        finally
+        {
+            var directory = Path.GetDirectoryName(relayPreferencePath);
+            if (directory is not null && Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
     }
 
     private sealed class FakeAudio : IAudioCaptureService
@@ -184,7 +220,12 @@ public sealed class PublisherRuntimeRelaySettingsTests
         private FakeSessionBackend(HttpListener listener, int port)
         {
             this.listener = listener;
-            BaseUrl = new Uri($"http://127.0.0.1:{port}/");
+            // Bind and connect via the literal hostname "localhost", not the IP-literal
+            // 127.0.0.1: on Windows, HTTP.sys auto-grants a non-admin process's URL-prefix
+            // reservation only for "localhost" — binding an IP-literal without elevation
+            // (or a prior `netsh http add urlacl`) throws HttpListenerException: Access is
+            // denied on a real Windows runner, which is this repo's primary target platform.
+            BaseUrl = new Uri($"http://localhost:{port}/");
             acceptLoop = Task.Run(AcceptLoopAsync);
         }
 
@@ -194,7 +235,7 @@ public sealed class PublisherRuntimeRelaySettingsTests
         {
             var port = GetFreeLoopbackPort();
             var listener = new HttpListener();
-            listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+            listener.Prefixes.Add($"http://localhost:{port}/");
             listener.Start();
             return Task.FromResult(new FakeSessionBackend(listener, port));
         }
