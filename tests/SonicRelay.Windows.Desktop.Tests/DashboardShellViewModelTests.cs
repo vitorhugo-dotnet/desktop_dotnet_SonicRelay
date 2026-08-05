@@ -16,8 +16,7 @@ public sealed class DashboardShellViewModelTests
     private static PublisherSnapshot StreamingSnapshot() => new()
     {
         IsAuthenticated = true,
-        UserEmail = "vitor.hugo@sonicrelay.app",
-        DeviceName = "STUDIO-PC",
+        DeviceName = "VITOR-DESKTOP",
         SessionId = Guid.NewGuid(),
         SessionCode = "K7DRRP",
         ViewerCount = 1,
@@ -67,8 +66,20 @@ public sealed class DashboardShellViewModelTests
 
         vm.Update(StreamingSnapshot(), ConnectedViewer(), forceRelay: false);
 
-        Assert.Equal("vitor.hugo@sonicrelay.app", vm.AccountLabel);
-        Assert.Equal("VH", vm.AccountInitials);
+        Assert.Equal("VITOR-DESKTOP", vm.AccountLabel);
+        Assert.Equal("VI", vm.AccountInitials);
+    }
+
+    [Fact]
+    public void Account_label_reports_a_missing_device_identity_rather_than_a_sign_in_state()
+    {
+        var vm = new DashboardShellViewModel();
+
+        vm.Update(new PublisherSnapshot(), diagnostics: null, forceRelay: false);
+
+        Assert.Equal("No device identity", vm.AccountLabel);
+        Assert.Equal("–", vm.AccountInitials);
+        Assert.DoesNotContain("signed in", vm.AccountLabel, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

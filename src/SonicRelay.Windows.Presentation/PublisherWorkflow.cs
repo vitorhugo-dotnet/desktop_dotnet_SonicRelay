@@ -146,8 +146,6 @@ public sealed class PublisherWorkflow : IAsyncDisposable
             SetState(state => state with
             {
                 IsAuthenticated = false,
-                UserDisplayName = null,
-                UserEmail = null,
                 DeviceId = null,
                 DeviceName = null,
                 SessionId = null,
@@ -193,8 +191,6 @@ public sealed class PublisherWorkflow : IAsyncDisposable
                 SetState(state => state with
                 {
                     IsAuthenticated = false,
-                    UserDisplayName = null,
-                    UserEmail = null,
                     DeviceId = null,
                     DeviceName = null,
                     ErrorMessage = message

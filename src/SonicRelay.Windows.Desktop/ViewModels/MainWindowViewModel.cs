@@ -379,7 +379,6 @@ public sealed class MainWindowViewModel : ViewModelBase
     private static PublisherSnapshot PreviewSnapshot() => new()
     {
         IsAuthenticated = true,
-        UserEmail = "publisher@sonicrelay.app",
         DeviceName = Environment.MachineName,
         SessionId = Guid.NewGuid(),
         SessionCode = "K7DRRP",
