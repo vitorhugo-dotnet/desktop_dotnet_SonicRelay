@@ -89,9 +89,22 @@ public sealed class MainWindowViewModelStateTests
         vm.Attach(runtime);
         vm.SelectedNavigation = vm.Navigation.Single(item => item.Key == PageKey.Session);
 
-        await vm.LogoutAsync();
+        await vm.UnpairAsync();
+        await vm.UnpairAsync();
 
         Assert.Equal(PageKey.Pairing, vm.CurrentPage);
+    }
+
+    [Fact]
+    public void Unpair_requires_a_confirmation_before_it_acts()
+    {
+        var vm = MainWindowViewModel.CreatePreview();
+
+        Assert.False(vm.UnpairConfirmationArmed);
+        vm.ArmUnpair();
+        Assert.True(vm.UnpairConfirmationArmed);
+        vm.DisarmUnpair();
+        Assert.False(vm.UnpairConfirmationArmed);
     }
 
     [Fact]

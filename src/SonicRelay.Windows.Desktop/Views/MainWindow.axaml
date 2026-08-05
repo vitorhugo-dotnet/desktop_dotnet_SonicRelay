@@ -33,11 +33,14 @@
           </StackPanel>
           <controls:AccountStatusHeader Grid.Column="1"
                                         DataContext="{Binding Shell}" />
-          <!-- Forgets this device's identity and returns to the pairing surface (issue #26
-               follow-up) — the recovery path for a stale/rejected device credential that
-               would otherwise never show a pairing code again without an app restart. -->
+          <!-- Revokes this device's pairings, then forgets its identity and returns to the
+               pairing surface (issue #26 follow-up) — the recovery path for a stale/rejected
+               device credential that would otherwise never show a pairing code again without
+               an app restart, and that used to leave every paired phone's pairing silently
+               dead by re-bootstrapping a new DeviceId. Two-click confirm: first click arms
+               (UnpairButtonLabel switches to the confirm wording), second click acts. -->
           <Button Grid.Column="2" Margin="16,0,0,0" Classes="ghost"
-                  Content="Sign out" Command="{Binding LogoutCommand}" />
+                  Content="{Binding UnpairButtonLabel}" Command="{Binding UnpairCommand}" />
         </Grid>
       </Border>
 

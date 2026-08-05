@@ -157,7 +157,8 @@ public sealed class PublisherRuntime : IAsyncDisposable
             credentialStore,
             new SessionApiClient(http, deviceIdentitySession),
             signaling,
-            audio);
+            audio,
+            new PairingApiClient(http, deviceIdentitySession));
         return new PublisherRuntime(
             http,
             workflow,

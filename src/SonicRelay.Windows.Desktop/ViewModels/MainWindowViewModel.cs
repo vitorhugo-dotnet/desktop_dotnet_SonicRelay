@@ -23,6 +23,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private PairingViewModel? pairing;
     private NavigationItem selectedNavigation;
     private bool clearLogsArmed;
+    private bool unpairConfirmationArmed;
     private string? diagnosticsActionMessage;
     private bool hasDeviceIdentity;
 
@@ -45,7 +46,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         StopAudioCommand = new RelayCommand(() => Run(w => w.StopAudioAsync()), () => ShellCommandAvailability.StopAudio(snapshot, HasWorkflow));
         EndSessionCommand = new RelayCommand(() => Run(w => w.EndSessionAsync()), () => ShellCommandAvailability.EndSession(snapshot, HasWorkflow));
         RetryCommand = new RelayCommand(() => Run(w => w.ReconnectSignalingAsync()), () => ShellCommandAvailability.Retry(snapshot, Shell.Capabilities, HasWorkflow));
-        LogoutCommand = new RelayCommand(LogoutAsync, () => ShellCommandAvailability.Logout(snapshot, Shell.Capabilities, HasWorkflow));
+        UnpairCommand = new RelayCommand(UnpairAsync, () => ShellCommandAvailability.Unpair(snapshot, Shell.Capabilities, HasWorkflow));
         ExportDiagnosticsCommand = new RelayCommand(ExportDiagnosticsAsync, () => runtime is not null);
         ClearDiagnosticsCommand = new RelayCommand(ClearDiagnosticsAsync, () => runtime is not null);
     }
@@ -167,6 +168,28 @@ public sealed class MainWindowViewModel : ViewModelBase
         private set => SetProperty(ref clearLogsArmed, value);
     }
 
+    /// <summary>
+    /// Two-click confirmation for the destructive top-bar unpair action, mirroring
+    /// <see cref="ClearLogsArmed"/> rather than a modal dialog: the first click arms, the
+    /// second acts.
+    /// </summary>
+    public bool UnpairConfirmationArmed
+    {
+        get => unpairConfirmationArmed;
+        private set
+        {
+            if (SetProperty(ref unpairConfirmationArmed, value))
+                RaisePropertyChanged(nameof(UnpairButtonLabel));
+        }
+    }
+
+    public string UnpairButtonLabel => unpairConfirmationArmed
+        ? "Confirm unpair — phones must pair again"
+        : "Unpair this device";
+
+    public void ArmUnpair() => UnpairConfirmationArmed = true;
+    public void DisarmUnpair() => UnpairConfirmationArmed = false;
+
     public string? DiagnosticsActionMessage
     {
         get => diagnosticsActionMessage;
@@ -190,7 +213,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     public RelayCommand StopAudioCommand { get; }
     public RelayCommand EndSessionCommand { get; }
     public RelayCommand RetryCommand { get; }
-    public RelayCommand LogoutCommand { get; }
+    public RelayCommand UnpairCommand { get; }
     public RelayCommand ExportDiagnosticsCommand { get; }
     public RelayCommand ClearDiagnosticsCommand { get; }
 
@@ -261,18 +284,31 @@ public sealed class MainWindowViewModel : ViewModelBase
         workflow is null ? Task.CompletedTask : action(workflow);
 
     /// <summary>
-    /// Signs out (issue #26 follow-up): clears the local device identity, switches the shell
-    /// to the Pairing nav page so the user actually sees it (rather than relying on a
-    /// snapshot-derived gate that a fast automatic re-bootstrap could flip straight back to
-    /// the dashboard before it ever rendered), and then immediately re-bootstraps a fresh
-    /// device identity so the pairing surface shows a new QR/challenge right away rather than
-    /// requiring an app restart. A backend hiccup during re-bootstrap simply leaves the
-    /// pairing page for a manual retry. Internal so tests can drive it directly (issue #26).
+    /// Two-click confirmation, matching the Clear-logs affordance in this same view model
+    /// rather than introducing a modal dialog dependency: the first click arms, the second
+    /// acts. Unpairing forces every paired phone to pair again, so it must not be a
+    /// single stray click on the top bar.
+    ///
+    /// On confirm: revokes this device's pairings and clears the local device identity
+    /// (<see cref="PublisherWorkflow.UnpairAsync"/>), switches the shell to the Pairing nav
+    /// page so the user actually sees it (rather than relying on a snapshot-derived gate that
+    /// a fast automatic re-bootstrap could flip straight back to the dashboard before it ever
+    /// rendered), and then immediately re-bootstraps a fresh device identity so the pairing
+    /// surface shows a new QR/challenge right away rather than requiring an app restart. A
+    /// backend hiccup during re-bootstrap simply leaves the pairing page for a manual retry.
+    /// Internal so tests can drive it directly (issue #26).
     /// </summary>
-    internal async Task LogoutAsync()
+    internal async Task UnpairAsync()
     {
         if (workflow is null) return;
-        await workflow.LogoutAsync();
+        if (!UnpairConfirmationArmed)
+        {
+            ArmUnpair();
+            return;
+        }
+
+        DisarmUnpair();
+        await workflow.UnpairAsync();
         SelectedNavigation = Navigation.Single(item => item.Key == PageKey.Pairing);
         if (runtime is not null)
         {
@@ -367,7 +403,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         StopAudioCommand.RaiseCanExecuteChanged();
         EndSessionCommand.RaiseCanExecuteChanged();
         RetryCommand.RaiseCanExecuteChanged();
-        LogoutCommand.RaiseCanExecuteChanged();
+        UnpairCommand.RaiseCanExecuteChanged();
         ExportDiagnosticsCommand.RaiseCanExecuteChanged();
         ClearDiagnosticsCommand.RaiseCanExecuteChanged();
     }
