@@ -11,8 +11,8 @@ namespace SonicRelay.Windows.Desktop.ViewModels;
 /// into <see cref="PublisherWorkflow"/> calls once a runtime is attached. With no runtime
 /// (the standalone preview launch) the actions are disabled and the shell renders the
 /// representative snapshot, so the layout and design system stay verifiable without a
-/// backend. Pairing is an ordinary, always-reachable nav page like Audio/Session/Settings —
-/// not a full-shell gate keyed off device-identity bootstrap (issue #26 follow-up).
+/// backend. Pairing and Settings are always reachable; the remaining destinations are gated
+/// on device-identity bootstrap (<see cref="HasDeviceIdentity"/>).
 /// </summary>
 public sealed class MainWindowViewModel : ViewModelBase
 {
@@ -24,6 +24,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private NavigationItem selectedNavigation;
     private bool clearLogsArmed;
     private string? diagnosticsActionMessage;
+    private bool hasDeviceIdentity;
 
     public MainWindowViewModel()
     {
@@ -36,7 +37,8 @@ public sealed class MainWindowViewModel : ViewModelBase
             new NavigationItem(PageKey.Diagnostics, "⚙", "Diagnostics"),
             new NavigationItem(PageKey.Settings, "⚑", "Settings"),
         ];
-        selectedNavigation = Navigation[0];
+        selectedNavigation = Navigation.Single(item => item.Key == PageKey.Pairing);
+        ApplyShellGate();
 
         CreateSessionCommand = new RelayCommand(() => Run(w => w.CreateSessionAsync()), () => ShellCommandAvailability.CreateSession(snapshot, HasWorkflow));
         StartAudioCommand = new RelayCommand(() => Run(w => w.StartAudioAsync()), () => ShellCommandAvailability.StartAudio(snapshot, HasWorkflow));
@@ -50,6 +52,40 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public IReadOnlyList<NavigationItem> Navigation { get; }
     public DashboardShellViewModel Shell { get; } = new();
+
+    /// <summary>
+    /// Whether this device has bootstrapped an identity. While false the shell is gated to
+    /// Pairing plus Settings: Settings must stay reachable so a wrong backend URL is always
+    /// correctable from inside the app, which is exactly what the old full-shell pairing gate
+    /// got wrong. Active pairings are deliberately not part of this — a device with an identity
+    /// but no pairing still gets the full shell.
+    /// </summary>
+    public bool HasDeviceIdentity
+    {
+        get => hasDeviceIdentity;
+        private set
+        {
+            if (!SetProperty(ref hasDeviceIdentity, value)) return;
+            ApplyShellGate();
+        }
+    }
+
+    private void ApplyShellGate()
+    {
+        foreach (var item in Navigation)
+        {
+            item.IsEnabled = hasDeviceIdentity || item.Key is PageKey.Pairing or PageKey.Settings;
+        }
+
+        if (!hasDeviceIdentity && SelectedNavigation.Key is not (PageKey.Pairing or PageKey.Settings))
+        {
+            SelectedNavigation = Navigation.Single(item => item.Key == PageKey.Pairing);
+        }
+        else if (hasDeviceIdentity && SelectedNavigation.Key == PageKey.Pairing)
+        {
+            SelectedNavigation = Navigation.Single(item => item.Key == PageKey.Dashboard);
+        }
+    }
 
     /// <summary>
     /// The active pairing surface's data source: null until the runtime's device identity
@@ -200,6 +236,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         Shell.Update(state, diagnostics, forceRelay);
         Settings.UpdateAuthentication(state?.HasDeviceIdentity ?? false);
+        HasDeviceIdentity = state?.HasDeviceIdentity ?? false;
         // The runtime only creates its PairingViewModel once device-identity bootstrap
         // succeeds (PublisherRuntime.InitializeDeviceIdentityAsync), so this stays null —
         // and the pairing view renders its disconnected placeholder — until then.
@@ -379,6 +416,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private static PublisherSnapshot PreviewSnapshot() => new()
     {
         IsAuthenticated = true,
+        DeviceId = Guid.NewGuid(),
         DeviceName = Environment.MachineName,
         SessionId = Guid.NewGuid(),
         SessionCode = "K7DRRP",

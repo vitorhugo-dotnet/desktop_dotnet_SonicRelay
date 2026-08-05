@@ -24,12 +24,37 @@ public sealed class MainWindowViewModelStateTests
     }
 
     [Fact]
-    public void Fresh_view_model_opens_on_the_dashboard()
+    public void Without_a_device_identity_only_pairing_and_settings_are_reachable()
     {
         var vm = new MainWindowViewModel();
 
+        Assert.False(vm.HasDeviceIdentity);
+        Assert.Equal(PageKey.Pairing, vm.CurrentPage);
+        Assert.True(vm.Navigation.Single(item => item.Key == PageKey.Pairing).IsEnabled);
+        Assert.True(vm.Navigation.Single(item => item.Key == PageKey.Settings).IsEnabled);
+        Assert.All(
+            vm.Navigation.Where(item => item.Key is not (PageKey.Pairing or PageKey.Settings)),
+            item => Assert.False(item.IsEnabled));
+    }
+
+    [Fact]
+    public void A_bootstrapped_device_identity_unlocks_the_shell_and_opens_the_dashboard()
+    {
+        var vm = MainWindowViewModel.CreatePreview();
+
+        Assert.True(vm.HasDeviceIdentity);
         Assert.Equal(PageKey.Dashboard, vm.CurrentPage);
-        Assert.False(vm.IsPairing);
+        Assert.All(vm.Navigation, item => Assert.True(item.IsEnabled));
+    }
+
+    [Fact]
+    public void Pairing_stays_reachable_after_the_shell_unlocks()
+    {
+        var vm = MainWindowViewModel.CreatePreview();
+
+        vm.SelectedNavigation = vm.Navigation.Single(item => item.Key == PageKey.Pairing);
+
+        Assert.True(vm.IsPairing);
     }
 
     [Fact]
@@ -70,15 +95,15 @@ public sealed class MainWindowViewModelStateTests
     }
 
     [Fact]
-    public void Navigation_defaults_to_the_dashboard()
+    public void Navigation_defaults_to_pairing_without_a_device_identity()
     {
         var vm = new MainWindowViewModel();
 
-        Assert.Equal(PageKey.Dashboard, vm.CurrentPage);
-        Assert.True(vm.IsDashboard);
+        Assert.Equal(PageKey.Pairing, vm.CurrentPage);
+        Assert.True(vm.IsPairing);
+        Assert.False(vm.IsDashboard);
         Assert.False(vm.IsSession);
         Assert.False(vm.IsDiagnostics);
-        Assert.False(vm.IsPairing);
     }
 
     [Fact]
@@ -186,9 +211,9 @@ public sealed class MainWindowViewModelStateTests
     }
 
     [Fact]
-    public void All_destinations_are_navigable()
+    public void All_destinations_are_navigable_once_the_shell_unlocks()
     {
-        var vm = new MainWindowViewModel();
+        var vm = MainWindowViewModel.CreatePreview();
 
         Assert.All(vm.Navigation, item => Assert.True(item.IsEnabled));
     }
