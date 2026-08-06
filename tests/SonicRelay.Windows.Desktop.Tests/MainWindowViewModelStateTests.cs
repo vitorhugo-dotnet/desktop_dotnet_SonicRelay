@@ -1,4 +1,3 @@
-using SonicRelay.Windows.ApiClient.Settings;
 using SonicRelay.Windows.Audio;
 using SonicRelay.Windows.Core.Configuration;
 using SonicRelay.Windows.Desktop.ViewModels;
@@ -145,41 +144,21 @@ public sealed class MainWindowViewModelStateTests
     }
 
     [Fact]
-    public async Task Selecting_settings_while_authenticated_refreshes_relay_settings()
+    public async Task Selecting_settings_does_not_touch_the_network()
     {
-        // "Settings page opened" is a relay-settings sync trigger point (design spec):
-        // otherwise pairing once, changing the relay mode/coturn URL from another app, then
-        // opening Windows Settings hours later shows a stale value and silently reverts the
-        // other app's change on the next save.
-        var stub = new StubRelaySettingsApiClient();
+        // Regression guard for the removal of the old server-sync trigger (issue #26 follow-up
+        // — relay mode/coturn override are per-device local preferences now, read straight from
+        // RelayPreferenceStore, so opening Settings has nothing to fetch). This only needs to
+        // prove opening Settings doesn't throw with a runtime attached but no device identity.
         await using var runtime = PublisherRuntime.Create(
             new Uri("https://backend.example.test/"), new FakeAudio(),
-            relaySettingsApiOverride: stub, relayPreferenceOverride: CreateTempRelayPreference());
-        var vm = new MainWindowViewModel();
-        vm.Attach(runtime);
-        // Simulate device-identity bootstrap having already completed; this itself triggers one
-        // auto-refresh (a separate fix), so record a baseline before navigating.
-        vm.Settings.UpdateAuthentication(true);
-        var baseline = stub.GetCallCount;
-
-        vm.SelectedNavigation = vm.Navigation.Single(item => item.Key == PageKey.Settings);
-
-        Assert.Equal(baseline + 1, stub.GetCallCount);
-    }
-
-    [Fact]
-    public async Task Selecting_settings_without_an_identity_does_not_call_the_relay_settings_api()
-    {
-        var stub = new StubRelaySettingsApiClient();
-        await using var runtime = PublisherRuntime.Create(
-            new Uri("https://backend.example.test/"), new FakeAudio(),
-            relaySettingsApiOverride: stub, relayPreferenceOverride: CreateTempRelayPreference());
+            relayPreferenceOverride: CreateTempRelayPreference());
         var vm = new MainWindowViewModel();
         vm.Attach(runtime);
 
         vm.SelectedNavigation = vm.Navigation.Single(item => item.Key == PageKey.Settings);
 
-        Assert.Equal(0, stub.GetCallCount);
+        Assert.True(vm.IsSettings);
     }
 
     // PublisherRuntime.Create falls back to the real, shared RelayPreferenceStore.DefaultPath
@@ -191,20 +170,6 @@ public sealed class MainWindowViewModelStateTests
     // in a different test project independently asserts that file's write time never changes).
     private static RelayPreferenceStore CreateTempRelayPreference() =>
         new(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "relay-preferences.json"));
-
-    private sealed class StubRelaySettingsApiClient : IRelaySettingsApiClient
-    {
-        public int GetCallCount { get; private set; }
-
-        public Task<RelaySettingsResponse> GetAsync(CancellationToken cancellationToken = default)
-        {
-            GetCallCount++;
-            return Task.FromResult(new RelaySettingsResponse("automatic", [], false));
-        }
-
-        public Task<RelaySettingsResponse> UpdateAsync(UpdateRelaySettingsRequest request, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new RelaySettingsResponse("automatic", [], false));
-    }
 
     private sealed class FakeAudio : IAudioCaptureService
     {

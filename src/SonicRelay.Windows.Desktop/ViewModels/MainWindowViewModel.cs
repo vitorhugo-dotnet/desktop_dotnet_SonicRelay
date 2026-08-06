@@ -121,16 +121,6 @@ public sealed class MainWindowViewModel : ViewModelBase
             RaisePropertyChanged(nameof(IsSettings));
             RaisePropertyChanged(nameof(PageTitle));
             RaisePropertyChanged(nameof(PageSubtitle));
-
-            // "Settings page opened" is one of the relay-settings sync trigger points (design
-            // spec): without this, pairing once, changing the relay mode/coturn URL from another
-            // app, then opening Settings here later would show a stale value and silently revert
-            // the other app's change on the next save. Best-effort, fire-and-forget — matching
-            // every other relay-settings refresh in this plan.
-            if (value.Key == PageKey.Settings && Settings.HasDeviceIdentity)
-            {
-                _ = Settings.RefreshRelaySettingsAsync();
-            }
         }
     }
 
@@ -238,7 +228,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         Settings = next is null
             ? new SettingsViewModel()
-            : new SettingsViewModel(next.BackendBaseUrl.ToString(), next.RelayPreference, next.AudioQuality, next.RelaySettingsApi, ChangeBackendUrlAsync);
+            : new SettingsViewModel(next.BackendBaseUrl.ToString(), next.RelayPreference, next.AudioQuality, ChangeBackendUrlAsync);
         Audio = next is null
             ? new AudioPageViewModel()
             : new AudioPageViewModel(next.AudioCapture, next.AudioOutput);

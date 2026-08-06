@@ -27,11 +27,23 @@ public sealed class RelayPreferenceStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task ApplyFetchedRelayModePersistsWithoutRequiringAWriteThroughCaller()
+    public async Task Coturn_override_round_trips_and_defaults_to_null()
     {
-        await new RelayPreferenceStore(path).ApplyFetchedRelayModeAsync(RelayModes.DisableFallback);
+        var store = new RelayPreferenceStore(path);
+        Assert.Null(store.CoturnUrlOverride);
 
-        Assert.Equal(RelayModes.DisableFallback, new RelayPreferenceStore(path).RelayMode);
+        await store.SetCoturnUrlOverrideAsync("turn:my-relay.example.com:3478?transport=udp");
+
+        Assert.Equal("turn:my-relay.example.com:3478?transport=udp", new RelayPreferenceStore(path).CoturnUrlOverride);
+    }
+
+    [Fact]
+    public async Task A_blank_coturn_override_is_stored_as_no_override()
+    {
+        var store = new RelayPreferenceStore(path);
+        await store.SetCoturnUrlOverrideAsync("   ");
+
+        Assert.Null(new RelayPreferenceStore(path).CoturnUrlOverride);
     }
 
     [Fact]

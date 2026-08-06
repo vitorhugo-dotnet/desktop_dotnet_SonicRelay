@@ -27,21 +27,19 @@
           </StackPanel>
           <StackPanel Spacing="4" IsVisible="{Binding HasDeviceIdentity}">
             <TextBlock Text="Relay mode" Foreground="{DynamicResource Sonic.TextPrimaryBrush}" />
-            <TextBlock Classes="metric-label" Text="Automatic falls back to relay only if a direct path fails. Applies to every device paired with this backend." />
+            <TextBlock Classes="metric-label" Text="Automatic falls back to relay only if a direct path fails. Applies to this device only." />
             <ComboBox ItemsSource="{Binding RelayModeOptions}" SelectedItem="{Binding RelayMode}"
                       AutomationProperties.Name="Relay mode" />
             <Button Content="Save relay mode" Command="{Binding SaveRelayModeCommand}" Margin="0,4,0,0" />
           </StackPanel>
           <StackPanel Spacing="4" IsVisible="{Binding HasDeviceIdentity}">
             <TextBlock Text="Coturn URL" Foreground="{DynamicResource Sonic.TextPrimaryBrush}" />
-            <TextBlock Classes="metric-label" Text="Override the TURN server this backend hands out to every device." />
+            <TextBlock Classes="metric-label"
+                       Text="Applies to this device only. Leave blank to use the relay the server provides." />
             <TextBox Text="{Binding TurnUriInput}" Watermark="turn:your-coturn-server.example.com:3478"
                      AutomationProperties.Name="Coturn URL" />
             <Button Content="Save coturn URL" Command="{Binding SaveTurnUriCommand}" />
           </StackPanel>
-          <TextBlock Classes="metric-label" Foreground="{DynamicResource Sonic.DangerBrush}"
-                     IsVisible="{Binding RelaySettingsError, Converter={x:Static ObjectConverters.IsNotNull}}"
-                     Text="{Binding RelaySettingsError}" TextWrapping="Wrap" />
         </StackPanel>
       </Border>
 
