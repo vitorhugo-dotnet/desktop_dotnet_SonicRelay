@@ -206,6 +206,64 @@ public sealed class SettingsViewModelRelayPreferenceTests : IDisposable
         Assert.True(vm.SaveTurnUriCommand.CanExecute(null));
     }
 
+    [Fact]
+    public async Task Saving_the_relay_mode_does_not_crash_when_the_store_cannot_write_to_disk()
+    {
+        // RelayCommand.Execute (SaveRelayModeCommand's actual caller in production) is async
+        // void with no catch of its own and this app has no global unhandled-exception handler,
+        // so an exception escaping SaveRelayModeAsync would take the whole process down. The
+        // preferences path here has a regular file standing in for one of its directory
+        // segments, so RelayPreferenceStore.PersistAsync's Directory.CreateDirectory genuinely
+        // throws (DirectoryNotFoundException, an IOException) instead of an artificial stand-in.
+        var (_, vm, unwritablePath) = MakeViewModelOverAnUnwritablePath();
+        try
+        {
+            vm.RelayMode = RelayModes.ForceRelay;
+
+            var exception = await Record.ExceptionAsync(vm.SaveRelayModeAsync);
+
+            Assert.Null(exception);
+        }
+        finally
+        {
+            File.Delete(unwritablePath);
+        }
+    }
+
+    [Fact]
+    public async Task Saving_the_turn_uri_does_not_crash_when_the_store_cannot_write_to_disk()
+    {
+        var (_, vm, unwritablePath) = MakeViewModelOverAnUnwritablePath();
+        try
+        {
+            vm.TurnUriInput = "turn:mine.example.com:3478";
+
+            var exception = await Record.ExceptionAsync(vm.SaveTurnUriAsync);
+
+            Assert.Null(exception);
+        }
+        finally
+        {
+            File.Delete(unwritablePath);
+        }
+    }
+
+    // A regular file standing in for a directory segment of the preferences path: Directory
+    // .CreateDirectory inside RelayPreferenceStore.PersistAsync then genuinely throws
+    // (DirectoryNotFoundException, an IOException) instead of relying on an artificial fake.
+    private static (RelayPreferenceStore Relay, SettingsViewModel ViewModel, string UnwritablePath) MakeViewModelOverAnUnwritablePath()
+    {
+        var fileStandingInForADirectory = Path.Combine(Path.GetTempPath(), "sonicrelay-unwritable-" + Guid.NewGuid().ToString("N"));
+        File.WriteAllText(fileStandingInForADirectory, "not a directory");
+        var relay = new RelayPreferenceStore(Path.Combine(fileStandingInForADirectory, "subdir", "prefs.json"));
+        var vm = new SettingsViewModel(
+            "https://backend.example.test/",
+            relay,
+            new AudioQualityStore(Path.Combine(Path.GetTempPath(), $"sonicrelay-unwritable-quality-{Guid.NewGuid():N}.json")),
+            _ => Task.FromResult<string?>(null));
+        return (relay, vm, fileStandingInForADirectory);
+    }
+
     private (RelayPreferenceStore Relay, SettingsViewModel ViewModel) MakeConnectedViewModel()
     {
         Directory.CreateDirectory(dir);

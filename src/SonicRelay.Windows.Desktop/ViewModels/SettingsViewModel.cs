@@ -162,19 +162,24 @@ public sealed class SettingsViewModel : ViewModelBase
     public RelayCommand SaveTurnUriCommand { get; } = new(() => Task.CompletedTask);
 
     /// <summary>Persists <see cref="RelayMode"/> to the local preference store. Purely local —
-    /// there is nothing to write through to a server.</summary>
-    public async Task SaveRelayModeAsync()
+    /// there is nothing to write through to a server. Routed through <see cref="Persist"/>, like
+    /// every other preference write in this view model: <see cref="RelayCommand.Execute"/> is
+    /// async void with no catch of its own, so an unhandled write failure (a locked preferences
+    /// file, a full disk, an unexpected invalid mode) would otherwise take the whole process
+    /// down instead of just failing this one save.</summary>
+    public Task SaveRelayModeAsync()
     {
-        if (relay is null) return;
-        await relay.SetRelayModeAsync(relayMode);
+        if (relay is not null) Persist(relay.SetRelayModeAsync(relayMode));
+        return Task.CompletedTask;
     }
 
     /// <summary>Persists <see cref="TurnUriInput"/> to the local preference store; a blank value
-    /// clears the override. Purely local — there is nothing to write through to a server.</summary>
-    public async Task SaveTurnUriAsync()
+    /// clears the override. Purely local — see <see cref="SaveRelayModeAsync"/> for why this
+    /// goes through <see cref="Persist"/> too.</summary>
+    public Task SaveTurnUriAsync()
     {
-        if (relay is null) return;
-        await relay.SetCoturnUrlOverrideAsync(turnUriInput);
+        if (relay is not null) Persist(relay.SetCoturnUrlOverrideAsync(turnUriInput));
+        return Task.CompletedTask;
     }
 
     public AudioQualityProfile SelectedProfile
@@ -200,10 +205,13 @@ public sealed class SettingsViewModel : ViewModelBase
             await write;
         }
         catch (Exception exception) when (
-            exception is IOException or UnauthorizedAccessException or ObjectDisposedException)
+            exception is IOException or UnauthorizedAccessException or ObjectDisposedException or ArgumentException)
         {
             // Persisting a preference is best-effort; the in-memory value already applies to
-            // the next stream, so a failed disk write must not crash the UI.
+            // the next stream, so a failed disk write (or, for relay mode, an unexpected
+            // ArgumentException from RelayPreferenceStore.PersistAsync's own validation) must
+            // not crash the UI. RelayCommand.Execute is async void with no catch of its own, so
+            // anything that escapes here would otherwise take the whole process down.
         }
     }
 }
