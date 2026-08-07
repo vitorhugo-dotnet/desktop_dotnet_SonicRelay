@@ -1,5 +1,9 @@
+using Avalonia.Headless.XUnit;
+using Avalonia.Threading;
+using SonicRelay.Windows.ApiClient.DeviceIdentity;
 using SonicRelay.Windows.Audio;
 using SonicRelay.Windows.Core.Configuration;
+using SonicRelay.Windows.Core.Storage.DeviceIdentity;
 using SonicRelay.Windows.Desktop.ViewModels;
 using SonicRelay.Windows.Presentation;
 using SonicRelay.Windows.Signaling;
@@ -7,10 +11,13 @@ using SonicRelay.Windows.Signaling;
 namespace SonicRelay.Windows.Desktop.Tests;
 
 /// <summary>
-/// Pairing is a normal, always-reachable nav page (issue #26 follow-up) — it is no longer a
-/// full-shell gate keyed off device-identity bootstrap, which is what let a sign-out's
-/// automatic re-bootstrap silently flip the shell back to the dashboard before the user ever
-/// saw the fresh pairing code.
+/// Pairing (and Settings) stay reachable even while every other destination is locked behind
+/// Task 3's device-identity gate — that was the fix for the old full-shell gate, which hid
+/// Settings too and left a bad backend URL with no way back in. Unpair still has to defend
+/// against the gate on its own terms, though: an unpair's automatic re-bootstrap flips the
+/// gate open through the same StateChanged path a normal cold start does, and without
+/// <c>MainWindowViewModel</c>'s pairing-held-by-unpair latch that would silently bounce the
+/// shell back to the dashboard before the user ever saw the fresh pairing code.
 /// </summary>
 public sealed class MainWindowViewModelStateTests
 {
@@ -79,19 +86,66 @@ public sealed class MainWindowViewModelStateTests
         Assert.Null(vm.Pairing);
     }
 
-    [Fact]
+    [AvaloniaFact]
     public async Task Signing_out_selects_the_pairing_page_even_if_rebootstrap_immediately_succeeds()
     {
+        // A fake device-identity API client plus an in-memory credential store are the
+        // narrowest seam that lets the re-bootstrap InitializeDeviceIdentityAsync runs after
+        // unpair genuinely SUCCEED, rather than always throwing (a prior version of this test
+        // pointed at "https://backend.example.test/" alone, a reserved TLD guaranteed to fail
+        // DNS, so the re-bootstrap always threw, was swallowed by UnpairAsync's catch, and
+        // HasDeviceIdentity never flipped true — this test could not actually distinguish
+        // "stayed on Pairing because the gate was correctly held off" from "stayed on Pairing
+        // because bootstrap never got the chance to try moving it away"). [AvaloniaFact] plus
+        // the explicit Dispatcher.UIThread.RunJobs() below (the same pattern
+        // PairingViewLifecycleTests uses) is needed because OnStateChanged marshals the
+        // resulting HasDeviceIdentity/ApplyShellGate update through Dispatcher.UIThread.Post —
+        // without a real dispatcher pumped on this thread that post is not guaranteed to have
+        // run yet when the assertions below execute, which is exactly the gate-skip behaviour
+        // under test here.
+        var deviceIdentityApi = new FakeDeviceIdentityApiClient();
         await using var runtime = PublisherRuntime.Create(
-            new Uri("https://backend.example.test/"), new FakeAudio(), relayPreferenceOverride: CreateTempRelayPreference());
+            new Uri("https://backend.example.test/"), new FakeAudio(),
+            credentialStoreOverride: new InMemoryFakeDeviceCredentialStore(),
+            relayPreferenceOverride: CreateTempRelayPreference(),
+            deviceIdentityApiClientOverride: deviceIdentityApi);
         var vm = new MainWindowViewModel();
         vm.Attach(runtime);
         vm.SelectedNavigation = vm.Navigation.Single(item => item.Key == PageKey.Session);
 
         await vm.UnpairAsync();
         await vm.UnpairAsync();
+        Dispatcher.UIThread.RunJobs();
 
+        // The re-bootstrap really did succeed this time (not merely swallowed) ...
+        Assert.True(vm.HasDeviceIdentity);
+        // ... yet the shell gate did not bounce the selection off Pairing onto the dashboard the
+        // instant it succeeded, the way it does for a normal cold start.
         Assert.Equal(PageKey.Pairing, vm.CurrentPage);
+    }
+
+    [AvaloniaFact]
+    public async Task A_normal_cold_start_still_advances_off_pairing_once_an_identity_is_gained()
+    {
+        // The counterpart to the test above: an identity gained without ever going through
+        // Unpair (the ordinary case — an existing credential loads at startup, or an
+        // unauthenticated device bootstraps for the first time) must still auto-advance the
+        // selection off Pairing, exactly as before Unpair's pairing-held-by-unpair latch existed.
+        var deviceIdentityApi = new FakeDeviceIdentityApiClient();
+        await using var runtime = PublisherRuntime.Create(
+            new Uri("https://backend.example.test/"), new FakeAudio(),
+            credentialStoreOverride: new InMemoryFakeDeviceCredentialStore(),
+            relayPreferenceOverride: CreateTempRelayPreference(),
+            deviceIdentityApiClientOverride: deviceIdentityApi);
+        var vm = new MainWindowViewModel();
+        vm.Attach(runtime);
+        Assert.Equal(PageKey.Pairing, vm.CurrentPage);
+
+        await runtime.InitializeDeviceIdentityAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.HasDeviceIdentity);
+        Assert.Equal(PageKey.Dashboard, vm.CurrentPage);
     }
 
     [Fact]
@@ -170,6 +224,39 @@ public sealed class MainWindowViewModelStateTests
     // in a different test project independently asserts that file's write time never changes).
     private static RelayPreferenceStore CreateTempRelayPreference() =>
         new(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "relay-preferences.json"));
+
+    /// <summary>Always succeeds, immediately, with no network call — the seam that lets a
+    /// device-identity bootstrap be driven to a genuine success in a test.</summary>
+    private sealed class FakeDeviceIdentityApiClient : IDeviceIdentityApiClient
+    {
+        public Task<BootstrapDeviceResponse> BootstrapAsync(
+            BootstrapDeviceRequest request, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new BootstrapDeviceResponse(Guid.NewGuid(), "device-secret", 1));
+
+        public Task<DeviceTokenResponse> TokenAsync(
+            DeviceTokenRequest request, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new DeviceTokenResponse("device-token", DateTimeOffset.UtcNow.AddHours(1), []));
+    }
+
+    private sealed class InMemoryFakeDeviceCredentialStore : IDeviceCredentialStore
+    {
+        private DeviceCredential? stored;
+
+        public Task<DeviceCredentialStorageResult> SaveAsync(DeviceCredential credential, CancellationToken cancellationToken = default)
+        {
+            stored = credential;
+            return Task.FromResult(DeviceCredentialStorageResult.Success(credential));
+        }
+
+        public Task<DeviceCredentialStorageResult> LoadAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(stored is null ? DeviceCredentialStorageResult.Success() : DeviceCredentialStorageResult.Success(stored));
+
+        public Task<DeviceCredentialStorageResult> DeleteAsync(CancellationToken cancellationToken = default)
+        {
+            stored = null;
+            return Task.FromResult(DeviceCredentialStorageResult.Success());
+        }
+    }
 
     private sealed class FakeAudio : IAudioCaptureService
     {

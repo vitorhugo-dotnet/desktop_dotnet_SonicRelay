@@ -70,8 +70,9 @@ public sealed class ShellRenderTests
     [AvaloniaFact]
     public void Pairing_surface_renders_when_the_pairing_page_is_selected()
     {
-        // Pairing is a normal, always-reachable nav page now (issue #26 follow-up), not a
-        // full-shell gate — selecting it explicitly shows the pairing surface.
+        // Pairing stays reachable even without a device identity (Task 3's gate locks every
+        // other destination, not this one) — a fresh, unauthenticated view model already
+        // defaults here, and this selects it explicitly to render the pairing surface.
         var viewModel = new MainWindowViewModel();
         viewModel.SelectedNavigation = viewModel.Navigation.Single(item => item.Key == PageKey.Pairing);
         var window = new MainWindow
@@ -96,8 +97,9 @@ public sealed class ShellRenderTests
     [AvaloniaFact]
     public void Dashboard_renders_by_default()
     {
-        // A fresh shell (and the preview) opens on the dashboard by default now that Pairing
-        // is an ordinary nav page rather than a snapshot-derived gate (issue #26 follow-up).
+        // A genuinely fresh, unauthenticated shell defaults to Pairing (Task 3's device-identity
+        // gate). The preview simulates an already-bootstrapped device, so that same gate
+        // immediately unlocks and auto-advances the selection off Pairing onto the dashboard.
         var viewModel = MainWindowViewModel.CreatePreview();
         var window = new MainWindow { DataContext = viewModel };
 

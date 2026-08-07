@@ -26,6 +26,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private bool unpairConfirmationArmed;
     private string? diagnosticsActionMessage;
     private bool hasDeviceIdentity;
+    private bool pairingHeldByUnpair;
 
     public MainWindowViewModel()
     {
@@ -71,6 +72,24 @@ public sealed class MainWindowViewModel : ViewModelBase
         }
     }
 
+    /// <summary>
+    /// Enables/disables nav items for the current identity state and, on a genuine state
+    /// change, moves the selection off a page that just became unreachable (or off Pairing
+    /// once the shell unlocks — the normal cold-start case: gained an identity while parked
+    /// on Pairing only because the gate put them there, never having chosen it themselves).
+    ///
+    /// The second branch is guarded by <see cref="pairingHeldByUnpair"/>: <see cref="UnpairAsync"/>
+    /// deliberately places the user on Pairing and then immediately re-bootstraps a fresh
+    /// identity so the pairing surface shows a new QR/challenge without a restart. That
+    /// re-bootstrap flips <see cref="HasDeviceIdentity"/> true through this exact same
+    /// StateChanged path, and without the guard this branch would fire the instant it
+    /// succeeds — the expected common case — bouncing someone who just confirmed an unpair
+    /// straight onto an idle Dashboard with no explanation. The two navigations to Pairing
+    /// (gate-driven vs. deliberate-after-unpair) look identical from here except for that
+    /// latch, so it is the only way to tell them apart. It goes through
+    /// <see cref="AssignSelectedNavigation"/> rather than the public <see cref="SelectedNavigation"/>
+    /// setter so this bookkeeping navigation never itself clears the latch.
+    /// </summary>
     private void ApplyShellGate()
     {
         foreach (var item in Navigation)
@@ -80,11 +99,11 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         if (!hasDeviceIdentity && SelectedNavigation.Key is not (PageKey.Pairing or PageKey.Settings))
         {
-            SelectedNavigation = Navigation.Single(item => item.Key == PageKey.Pairing);
+            AssignSelectedNavigation(Navigation.Single(item => item.Key == PageKey.Pairing));
         }
-        else if (hasDeviceIdentity && SelectedNavigation.Key == PageKey.Pairing)
+        else if (hasDeviceIdentity && SelectedNavigation.Key == PageKey.Pairing && !pairingHeldByUnpair)
         {
-            SelectedNavigation = Navigation.Single(item => item.Key == PageKey.Dashboard);
+            AssignSelectedNavigation(Navigation.Single(item => item.Key == PageKey.Dashboard));
         }
     }
 
@@ -104,24 +123,40 @@ public sealed class MainWindowViewModel : ViewModelBase
     public SettingsViewModel Settings { get; private set; } = new();
     public AudioPageViewModel Audio { get; private set; } = new();
 
-    /// <summary>The selected sidebar destination; bound two-way to the navigation rail.</summary>
+    /// <summary>
+    /// The selected sidebar destination; bound two-way to the navigation rail. Any assignment
+    /// through this public setter — a user's click, or code standing in for one — counts as a
+    /// deliberate choice of page and clears <see cref="pairingHeldByUnpair"/>, so an unrelated
+    /// later identity change goes back to the normal gate behaviour. <see cref="ApplyShellGate"/>'s
+    /// own bookkeeping navigations go through <see cref="AssignSelectedNavigation"/> directly so
+    /// they are not mistaken for that kind of deliberate choice.
+    /// </summary>
     public NavigationItem SelectedNavigation
     {
         get => selectedNavigation;
         set
         {
-            // The rail can push a null selection transiently; keep the last valid page.
-            if (value is null || !SetProperty(ref selectedNavigation, value)) return;
-            RaisePropertyChanged(nameof(CurrentPage));
-            RaisePropertyChanged(nameof(IsDashboard));
-            RaisePropertyChanged(nameof(IsPairing));
-            RaisePropertyChanged(nameof(IsSession));
-            RaisePropertyChanged(nameof(IsDiagnostics));
-            RaisePropertyChanged(nameof(IsAudio));
-            RaisePropertyChanged(nameof(IsSettings));
-            RaisePropertyChanged(nameof(PageTitle));
-            RaisePropertyChanged(nameof(PageSubtitle));
+            if (!AssignSelectedNavigation(value)) return;
+            pairingHeldByUnpair = false;
         }
+    }
+
+    /// <summary>Core of the <see cref="SelectedNavigation"/> setter, without the
+    /// deliberate-choice bookkeeping — see that property's doc comment.</summary>
+    private bool AssignSelectedNavigation(NavigationItem? value)
+    {
+        // The rail can push a null selection transiently; keep the last valid page.
+        if (value is null || !SetProperty(ref selectedNavigation, value)) return false;
+        RaisePropertyChanged(nameof(CurrentPage));
+        RaisePropertyChanged(nameof(IsDashboard));
+        RaisePropertyChanged(nameof(IsPairing));
+        RaisePropertyChanged(nameof(IsSession));
+        RaisePropertyChanged(nameof(IsDiagnostics));
+        RaisePropertyChanged(nameof(IsAudio));
+        RaisePropertyChanged(nameof(IsSettings));
+        RaisePropertyChanged(nameof(PageTitle));
+        RaisePropertyChanged(nameof(PageSubtitle));
+        return true;
     }
 
     public PageKey CurrentPage => selectedNavigation.Key;
@@ -284,9 +319,17 @@ public sealed class MainWindowViewModel : ViewModelBase
     /// page so the user actually sees it (rather than relying on a snapshot-derived gate that
     /// a fast automatic re-bootstrap could flip straight back to the dashboard before it ever
     /// rendered), and then immediately re-bootstraps a fresh device identity so the pairing
-    /// surface shows a new QR/challenge right away rather than requiring an app restart. A
-    /// backend hiccup during re-bootstrap simply leaves the pairing page for a manual retry.
-    /// Internal so tests can drive it directly (issue #26).
+    /// surface shows a new QR/challenge right away rather than requiring an app restart.
+    ///
+    /// That re-bootstrap succeeding is the expected common case, and it flips
+    /// <see cref="HasDeviceIdentity"/> true through the same path <see cref="ApplyShellGate"/>
+    /// watches to auto-advance a cold start off Pairing — so <see cref="pairingHeldByUnpair"/>
+    /// is set right after forcing the selection, holding the gate off Pairing until the user
+    /// deliberately navigates somewhere themselves (see the <see cref="SelectedNavigation"/>
+    /// setter). Otherwise whoever just confirmed an unpair would be bounced straight onto an
+    /// idle Dashboard with no explanation, never seeing the fresh pairing code the re-bootstrap
+    /// just produced. A backend hiccup during re-bootstrap simply leaves the pairing page for a
+    /// manual retry. Internal so tests can drive it directly (issue #26).
     /// </summary>
     internal async Task UnpairAsync()
     {
@@ -300,6 +343,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         DisarmUnpair();
         await workflow.UnpairAsync();
         SelectedNavigation = Navigation.Single(item => item.Key == PageKey.Pairing);
+        pairingHeldByUnpair = true;
         if (runtime is not null)
         {
             try { await runtime.InitializeDeviceIdentityAsync(); }

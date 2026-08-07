@@ -84,14 +84,19 @@ public sealed class PublisherRuntime : IAsyncDisposable
     /// audio-output preference store (Linux would use Secret Service instead of
     /// DPAPI); omitting either keeps the existing Windows-default behavior.
     /// <paramref name="relayPreferenceOverride"/> exists for tests — the default on-disk
-    /// preferences file is otherwise always used.
+    /// preferences file is otherwise always used. <paramref name="deviceIdentityApiClientOverride"/>
+    /// also exists only for tests: it is the narrowest seam that lets a test drive a
+    /// device-identity bootstrap through to a genuine success without a real backend,
+    /// since <see cref="DeviceIdentitySession"/> otherwise always talks over
+    /// <paramref name="backendBaseUrl"/>.
     /// </summary>
     public static PublisherRuntime Create(
         Uri backendBaseUrl,
         IAudioCaptureService audioCapture,
         IDeviceCredentialStore? credentialStoreOverride = null,
         AudioOutputPreferenceStore? audioOutputPreferenceOverride = null,
-        RelayPreferenceStore? relayPreferenceOverride = null)
+        RelayPreferenceStore? relayPreferenceOverride = null,
+        IDeviceIdentityApiClient? deviceIdentityApiClientOverride = null)
     {
         ArgumentNullException.ThrowIfNull(backendBaseUrl);
         ArgumentNullException.ThrowIfNull(audioCapture);
@@ -107,7 +112,7 @@ public sealed class PublisherRuntime : IAsyncDisposable
         var http = new HttpClient { BaseAddress = normalized, Timeout = TimeSpan.FromSeconds(30) };
         var credentialStore = credentialStoreOverride ?? new UserScopedDeviceCredentialStore();
         var deviceIdentitySession = new DeviceIdentitySession(
-            new DeviceIdentityApiClient(http),
+            deviceIdentityApiClientOverride ?? new DeviceIdentityApiClient(http),
             credentialStore,
             Environment.MachineName);
 
