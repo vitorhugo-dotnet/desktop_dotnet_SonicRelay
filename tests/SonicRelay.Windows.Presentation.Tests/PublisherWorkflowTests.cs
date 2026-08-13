@@ -1,4 +1,5 @@
 using SonicRelay.Windows.ApiClient.Errors;
+using SonicRelay.Windows.ApiClient.Pairing;
 using SonicRelay.Windows.ApiClient.Sessions;
 using SonicRelay.Windows.Audio;
 using SonicRelay.Windows.Core.Authentication;
@@ -88,7 +89,7 @@ public sealed class PublisherWorkflowTests
         await fixture.Workflow.CreateSessionAsync();
         await fixture.Workflow.StartAudioAsync();
 
-        await fixture.Workflow.LogoutAsync();
+        await fixture.Workflow.UnpairAsync();
 
         Assert.True(fixture.Audio.StopCalled);
         Assert.True(fixture.Signaling.CloseCalled);
@@ -106,12 +107,91 @@ public sealed class PublisherWorkflowTests
         await using var fixture = new DeviceIdentityFixture();
         await fixture.Workflow.InitializeDeviceIdentityAsync();
 
-        await fixture.Workflow.LogoutAsync();
+        await fixture.Workflow.UnpairAsync();
 
         Assert.False(fixture.Signaling.CloseCalled);
         Assert.Equal(1, fixture.Identity.ResetCalls);
         Assert.False(fixture.Workflow.State.IsAuthenticated);
         Assert.Null(fixture.Workflow.State.DeviceId);
+    }
+
+    [Fact]
+    public async Task Unpair_revokes_active_pairings_before_clearing_the_local_identity()
+    {
+        var pairings = new FakePairingApiClient
+        {
+            Pairings = [new PairingResponse(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "active", DateTimeOffset.UtcNow, null)]
+        };
+        var workflow = CreateWorkflow(pairings);
+        await workflow.InitializeDeviceIdentityAsync();
+
+        await workflow.UnpairAsync();
+
+        Assert.Single(pairings.RevokedIds);
+        Assert.False(workflow.State.IsAuthenticated);
+        Assert.Null(workflow.State.DeviceId);
+    }
+
+    [Fact]
+    public async Task Unpair_still_clears_the_local_identity_when_revocation_fails()
+    {
+        var pairings = new FakePairingApiClient { ThrowOnList = true };
+        var workflow = CreateWorkflow(pairings);
+        await workflow.InitializeDeviceIdentityAsync();
+
+        await workflow.UnpairAsync();
+
+        Assert.False(workflow.State.IsAuthenticated);
+        Assert.Contains(workflow.State.ActivityLog, line => line.Contains("could not be revoked", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Unpair_attempts_every_active_pairing_even_if_one_in_the_middle_fails()
+    {
+        var first = new PairingResponse(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "active", DateTimeOffset.UtcNow, null);
+        var second = new PairingResponse(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "active", DateTimeOffset.UtcNow, null);
+        var third = new PairingResponse(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "active", DateTimeOffset.UtcNow, null);
+        var pairings = new FakePairingApiClient { Pairings = [first, second, third] };
+        pairings.ThrowOnRevokeIds.Add(second.PairingId);
+        var workflow = CreateWorkflow(pairings);
+        await workflow.InitializeDeviceIdentityAsync();
+
+        await workflow.UnpairAsync();
+
+        // The middle revocation throwing must not skip the third pairing: both first and
+        // third are still attempted (and succeed), only the middle one fails.
+        Assert.Contains(first.PairingId, pairings.RevokedIds);
+        Assert.Contains(third.PairingId, pairings.RevokedIds);
+        Assert.DoesNotContain(second.PairingId, pairings.RevokedIds);
+        Assert.Equal(2, pairings.RevokedIds.Count);
+
+        // The local identity is still cleared regardless of the partial failure.
+        Assert.False(workflow.State.IsAuthenticated);
+        Assert.Null(workflow.State.DeviceId);
+
+        // The log names the partial outcome rather than implying total success or total failure.
+        Assert.Contains(workflow.State.ActivityLog, line =>
+            line.Contains("could not be revoked", StringComparison.Ordinal) &&
+            line.Contains('2', StringComparison.Ordinal) &&
+            line.Contains('1', StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Unpair_revokes_every_active_pairing_not_just_the_first()
+    {
+        var first = new PairingResponse(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "active", DateTimeOffset.UtcNow, null);
+        var second = new PairingResponse(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "active", DateTimeOffset.UtcNow, null);
+        var third = new PairingResponse(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "active", DateTimeOffset.UtcNow, null);
+        var pairings = new FakePairingApiClient { Pairings = [first, second, third] };
+        var workflow = CreateWorkflow(pairings);
+        await workflow.InitializeDeviceIdentityAsync();
+
+        await workflow.UnpairAsync();
+
+        Assert.Equal(3, pairings.RevokedIds.Count);
+        Assert.Contains(first.PairingId, pairings.RevokedIds);
+        Assert.Contains(second.PairingId, pairings.RevokedIds);
+        Assert.Contains(third.PairingId, pairings.RevokedIds);
     }
 
     [Fact]
@@ -159,6 +239,23 @@ public sealed class PublisherWorkflowTests
         Assert.Equal(fixture.Sessions.Created.Id.ToString("D"), fixture.Signaling.SessionId);
     }
 
+    private static PublisherWorkflow CreateWorkflow(IPairingApiClient pairings)
+    {
+        var credential = new DeviceCredential(
+            Guid.Parse("00000000-0000-0000-0000-000000000501"),
+            "device-secret",
+            1,
+            "windows_publisher",
+            "windows");
+        return new PublisherWorkflow(
+            new FakeDeviceIdentity(),
+            new FakeDeviceCredentialStore(credential),
+            new FakeSessions(),
+            new FakeSignaling(),
+            new FakeAudio(),
+            pairings);
+    }
+
     private sealed class DeviceIdentityFixture : IAsyncDisposable
     {
         public DeviceCredential Credential { get; } = new(
@@ -171,6 +268,7 @@ public sealed class PublisherWorkflowTests
         public FakeSessions Sessions { get; } = new();
         public FakeSignaling Signaling { get; } = new();
         public FakeAudio Audio { get; } = new();
+        public FakePairingApiClient Pairings { get; } = new();
         public PublisherWorkflow Workflow { get; }
 
         public DeviceIdentityFixture()
@@ -180,7 +278,8 @@ public sealed class PublisherWorkflowTests
                 new FakeDeviceCredentialStore(Credential),
                 Sessions,
                 Signaling,
-                Audio);
+                Audio,
+                Pairings);
         }
 
         public ValueTask DisposeAsync() => Workflow.DisposeAsync();
@@ -265,6 +364,33 @@ public sealed class PublisherWorkflowTests
             return Task.CompletedTask;
         }
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class FakePairingApiClient : IPairingApiClient
+    {
+        public IReadOnlyList<PairingResponse> Pairings { get; set; } = [];
+        public List<Guid> RevokedIds { get; } = [];
+        public bool ThrowOnList { get; set; }
+        public HashSet<Guid> ThrowOnRevokeIds { get; } = [];
+
+        public Task<CreatePairingChallengeResponse> CreatePairingChallengeAsync(CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException("Not exercised by PublisherWorkflow.");
+
+        public Task<IReadOnlyList<PairingResponse>> ListPairingsAsync(Guid deviceId, CancellationToken cancellationToken = default) =>
+            ThrowOnList
+                ? Task.FromException<IReadOnlyList<PairingResponse>>(new InvalidOperationException("Pairing backend unreachable."))
+                : Task.FromResult(Pairings);
+
+        public Task RevokePairingAsync(Guid pairingId, CancellationToken cancellationToken = default)
+        {
+            if (ThrowOnRevokeIds.Contains(pairingId))
+            {
+                return Task.FromException(new InvalidOperationException("Revocation failed."));
+            }
+
+            RevokedIds.Add(pairingId);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FakeAudio : IAudioCaptureService

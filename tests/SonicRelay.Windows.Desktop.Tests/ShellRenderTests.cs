@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Media;
+using Avalonia.VisualTree;
 using SonicRelay.Windows.Core.Audio;
 using SonicRelay.Windows.Core.Configuration;
 using SonicRelay.Windows.Desktop.Controls;
@@ -69,8 +70,9 @@ public sealed class ShellRenderTests
     [AvaloniaFact]
     public void Pairing_surface_renders_when_the_pairing_page_is_selected()
     {
-        // Pairing is a normal, always-reachable nav page now (issue #26 follow-up), not a
-        // full-shell gate — selecting it explicitly shows the pairing surface.
+        // Pairing stays reachable even without a device identity (Task 3's gate locks every
+        // other destination, not this one) — a fresh, unauthenticated view model already
+        // defaults here, and this selects it explicitly to render the pairing surface.
         var viewModel = new MainWindowViewModel();
         viewModel.SelectedNavigation = viewModel.Navigation.Single(item => item.Key == PageKey.Pairing);
         var window = new MainWindow
@@ -95,8 +97,9 @@ public sealed class ShellRenderTests
     [AvaloniaFact]
     public void Dashboard_renders_by_default()
     {
-        // A fresh shell (and the preview) opens on the dashboard by default now that Pairing
-        // is an ordinary nav page rather than a snapshot-derived gate (issue #26 follow-up).
+        // A genuinely fresh, unauthenticated shell defaults to Pairing (Task 3's device-identity
+        // gate). The preview simulates an already-bootstrapped device, so that same gate
+        // immediately unlocks and auto-advances the selection off Pairing onto the dashboard.
         var viewModel = MainWindowViewModel.CreatePreview();
         var window = new MainWindow { DataContext = viewModel };
 
@@ -141,6 +144,27 @@ public sealed class ShellRenderTests
         {
             try { Directory.Delete(dir, recursive: true); } catch { }
         }
+    }
+
+    [AvaloniaFact]
+    public void Technical_console_is_height_bounded_so_it_cannot_cover_the_dashboard_cards()
+    {
+        var console = new SonicRelay.Windows.Desktop.Controls.TechnicalConsole
+        {
+            DataContext = new DashboardShellViewModel()
+        };
+
+        // Compiled-binding content only materializes past the UserControl's ContentPresenter
+        // once the control is attached to a shown visual tree, so this uses the same
+        // window.Show() headless-render setup the rest of this file relies on.
+        var window = new Window { Content = console };
+        window.Show();
+
+        var card = console.GetVisualDescendants().OfType<Border>()
+            .First(border => border.Classes.Contains("card"));
+
+        Assert.True(double.IsFinite(card.MaxHeight),
+            "The console must cap its height or the DockPanel lets it grow over the cards above.");
     }
 
     [AvaloniaFact]

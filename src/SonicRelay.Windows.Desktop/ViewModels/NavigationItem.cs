@@ -4,9 +4,10 @@ namespace SonicRelay.Windows.Desktop.ViewModels;
 public enum PageKey { Dashboard, Pairing, Audio, Session, Diagnostics, Settings }
 
 /// <summary>
-/// A sidebar navigation entry. All destinations — Dashboard, Pairing, Audio, Session,
-/// Diagnostics and Settings — are live and always enabled; Pairing in particular is an
-/// ordinary, always-reachable nav page rather than a full-shell gate (issue #26 follow-up).
+/// A sidebar navigation entry. Pairing and Settings are always enabled; the remaining
+/// destinations are disabled until the device has bootstrapped an identity
+/// (<see cref="MainWindowViewModel.HasDeviceIdentity"/>). Settings in particular must stay
+/// reachable while gated, so a wrong backend URL is always correctable in-app.
 /// </summary>
 public sealed class NavigationItem : ViewModelBase
 {

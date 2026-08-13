@@ -1,6 +1,9 @@
-using SonicRelay.Windows.ApiClient.Settings;
+using Avalonia.Headless.XUnit;
+using Avalonia.Threading;
+using SonicRelay.Windows.ApiClient.DeviceIdentity;
 using SonicRelay.Windows.Audio;
 using SonicRelay.Windows.Core.Configuration;
+using SonicRelay.Windows.Core.Storage.DeviceIdentity;
 using SonicRelay.Windows.Desktop.ViewModels;
 using SonicRelay.Windows.Presentation;
 using SonicRelay.Windows.Signaling;
@@ -8,10 +11,13 @@ using SonicRelay.Windows.Signaling;
 namespace SonicRelay.Windows.Desktop.Tests;
 
 /// <summary>
-/// Pairing is a normal, always-reachable nav page (issue #26 follow-up) — it is no longer a
-/// full-shell gate keyed off device-identity bootstrap, which is what let a sign-out's
-/// automatic re-bootstrap silently flip the shell back to the dashboard before the user ever
-/// saw the fresh pairing code.
+/// Pairing (and Settings) stay reachable even while every other destination is locked behind
+/// Task 3's device-identity gate — that was the fix for the old full-shell gate, which hid
+/// Settings too and left a bad backend URL with no way back in. Unpair still has to defend
+/// against the gate on its own terms, though: an unpair's automatic re-bootstrap flips the
+/// gate open through the same StateChanged path a normal cold start does, and without
+/// <c>MainWindowViewModel</c>'s pairing-held-by-unpair latch that would silently bounce the
+/// shell back to the dashboard before the user ever saw the fresh pairing code.
 /// </summary>
 public sealed class MainWindowViewModelStateTests
 {
@@ -24,12 +30,37 @@ public sealed class MainWindowViewModelStateTests
     }
 
     [Fact]
-    public void Fresh_view_model_opens_on_the_dashboard()
+    public void Without_a_device_identity_only_pairing_and_settings_are_reachable()
     {
         var vm = new MainWindowViewModel();
 
+        Assert.False(vm.HasDeviceIdentity);
+        Assert.Equal(PageKey.Pairing, vm.CurrentPage);
+        Assert.True(vm.Navigation.Single(item => item.Key == PageKey.Pairing).IsEnabled);
+        Assert.True(vm.Navigation.Single(item => item.Key == PageKey.Settings).IsEnabled);
+        Assert.All(
+            vm.Navigation.Where(item => item.Key is not (PageKey.Pairing or PageKey.Settings)),
+            item => Assert.False(item.IsEnabled));
+    }
+
+    [Fact]
+    public void A_bootstrapped_device_identity_unlocks_the_shell_and_opens_the_dashboard()
+    {
+        var vm = MainWindowViewModel.CreatePreview();
+
+        Assert.True(vm.HasDeviceIdentity);
         Assert.Equal(PageKey.Dashboard, vm.CurrentPage);
-        Assert.False(vm.IsPairing);
+        Assert.All(vm.Navigation, item => Assert.True(item.IsEnabled));
+    }
+
+    [Fact]
+    public void Pairing_stays_reachable_after_the_shell_unlocks()
+    {
+        var vm = MainWindowViewModel.CreatePreview();
+
+        vm.SelectedNavigation = vm.Navigation.Single(item => item.Key == PageKey.Pairing);
+
+        Assert.True(vm.IsPairing);
     }
 
     [Fact]
@@ -55,30 +86,90 @@ public sealed class MainWindowViewModelStateTests
         Assert.Null(vm.Pairing);
     }
 
-    [Fact]
+    [AvaloniaFact]
     public async Task Signing_out_selects_the_pairing_page_even_if_rebootstrap_immediately_succeeds()
     {
+        // A fake device-identity API client plus an in-memory credential store are the
+        // narrowest seam that lets the re-bootstrap InitializeDeviceIdentityAsync runs after
+        // unpair genuinely SUCCEED, rather than always throwing (a prior version of this test
+        // pointed at "https://backend.example.test/" alone, a reserved TLD guaranteed to fail
+        // DNS, so the re-bootstrap always threw, was swallowed by UnpairAsync's catch, and
+        // HasDeviceIdentity never flipped true — this test could not actually distinguish
+        // "stayed on Pairing because the gate was correctly held off" from "stayed on Pairing
+        // because bootstrap never got the chance to try moving it away"). [AvaloniaFact] plus
+        // the explicit Dispatcher.UIThread.RunJobs() below (the same pattern
+        // PairingViewLifecycleTests uses) is needed because OnStateChanged marshals the
+        // resulting HasDeviceIdentity/ApplyShellGate update through Dispatcher.UIThread.Post —
+        // without a real dispatcher pumped on this thread that post is not guaranteed to have
+        // run yet when the assertions below execute, which is exactly the gate-skip behaviour
+        // under test here.
+        var deviceIdentityApi = new FakeDeviceIdentityApiClient();
         await using var runtime = PublisherRuntime.Create(
-            new Uri("https://backend.example.test/"), new FakeAudio(), relayPreferenceOverride: CreateTempRelayPreference());
+            new Uri("https://backend.example.test/"), new FakeAudio(),
+            credentialStoreOverride: new InMemoryFakeDeviceCredentialStore(),
+            relayPreferenceOverride: CreateTempRelayPreference(),
+            deviceIdentityApiClientOverride: deviceIdentityApi);
         var vm = new MainWindowViewModel();
         vm.Attach(runtime);
         vm.SelectedNavigation = vm.Navigation.Single(item => item.Key == PageKey.Session);
 
-        await vm.LogoutAsync();
+        await vm.UnpairAsync();
+        await vm.UnpairAsync();
+        Dispatcher.UIThread.RunJobs();
 
+        // The re-bootstrap really did succeed this time (not merely swallowed) ...
+        Assert.True(vm.HasDeviceIdentity);
+        // ... yet the shell gate did not bounce the selection off Pairing onto the dashboard the
+        // instant it succeeded, the way it does for a normal cold start.
         Assert.Equal(PageKey.Pairing, vm.CurrentPage);
     }
 
+    [AvaloniaFact]
+    public async Task A_normal_cold_start_still_advances_off_pairing_once_an_identity_is_gained()
+    {
+        // The counterpart to the test above: an identity gained without ever going through
+        // Unpair (the ordinary case — an existing credential loads at startup, or an
+        // unauthenticated device bootstraps for the first time) must still auto-advance the
+        // selection off Pairing, exactly as before Unpair's pairing-held-by-unpair latch existed.
+        var deviceIdentityApi = new FakeDeviceIdentityApiClient();
+        await using var runtime = PublisherRuntime.Create(
+            new Uri("https://backend.example.test/"), new FakeAudio(),
+            credentialStoreOverride: new InMemoryFakeDeviceCredentialStore(),
+            relayPreferenceOverride: CreateTempRelayPreference(),
+            deviceIdentityApiClientOverride: deviceIdentityApi);
+        var vm = new MainWindowViewModel();
+        vm.Attach(runtime);
+        Assert.Equal(PageKey.Pairing, vm.CurrentPage);
+
+        await runtime.InitializeDeviceIdentityAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.HasDeviceIdentity);
+        Assert.Equal(PageKey.Dashboard, vm.CurrentPage);
+    }
+
     [Fact]
-    public void Navigation_defaults_to_the_dashboard()
+    public void Unpair_requires_a_confirmation_before_it_acts()
+    {
+        var vm = MainWindowViewModel.CreatePreview();
+
+        Assert.False(vm.UnpairConfirmationArmed);
+        vm.ArmUnpair();
+        Assert.True(vm.UnpairConfirmationArmed);
+        vm.DisarmUnpair();
+        Assert.False(vm.UnpairConfirmationArmed);
+    }
+
+    [Fact]
+    public void Navigation_defaults_to_pairing_without_a_device_identity()
     {
         var vm = new MainWindowViewModel();
 
-        Assert.Equal(PageKey.Dashboard, vm.CurrentPage);
-        Assert.True(vm.IsDashboard);
+        Assert.Equal(PageKey.Pairing, vm.CurrentPage);
+        Assert.True(vm.IsPairing);
+        Assert.False(vm.IsDashboard);
         Assert.False(vm.IsSession);
         Assert.False(vm.IsDiagnostics);
-        Assert.False(vm.IsPairing);
     }
 
     [Fact]
@@ -107,41 +198,21 @@ public sealed class MainWindowViewModelStateTests
     }
 
     [Fact]
-    public async Task Selecting_settings_while_authenticated_refreshes_relay_settings()
+    public async Task Selecting_settings_does_not_touch_the_network()
     {
-        // "Settings page opened" is a relay-settings sync trigger point (design spec):
-        // otherwise pairing once, changing the relay mode/coturn URL from another app, then
-        // opening Windows Settings hours later shows a stale value and silently reverts the
-        // other app's change on the next save.
-        var stub = new StubRelaySettingsApiClient();
+        // Regression guard for the removal of the old server-sync trigger (issue #26 follow-up
+        // — relay mode/coturn override are per-device local preferences now, read straight from
+        // RelayPreferenceStore, so opening Settings has nothing to fetch). This only needs to
+        // prove opening Settings doesn't throw with a runtime attached but no device identity.
         await using var runtime = PublisherRuntime.Create(
             new Uri("https://backend.example.test/"), new FakeAudio(),
-            relaySettingsApiOverride: stub, relayPreferenceOverride: CreateTempRelayPreference());
-        var vm = new MainWindowViewModel();
-        vm.Attach(runtime);
-        // Simulate device-identity bootstrap having already completed; this itself triggers one
-        // auto-refresh (a separate fix), so record a baseline before navigating.
-        vm.Settings.UpdateAuthentication(true);
-        var baseline = stub.GetCallCount;
-
-        vm.SelectedNavigation = vm.Navigation.Single(item => item.Key == PageKey.Settings);
-
-        Assert.Equal(baseline + 1, stub.GetCallCount);
-    }
-
-    [Fact]
-    public async Task Selecting_settings_without_an_identity_does_not_call_the_relay_settings_api()
-    {
-        var stub = new StubRelaySettingsApiClient();
-        await using var runtime = PublisherRuntime.Create(
-            new Uri("https://backend.example.test/"), new FakeAudio(),
-            relaySettingsApiOverride: stub, relayPreferenceOverride: CreateTempRelayPreference());
+            relayPreferenceOverride: CreateTempRelayPreference());
         var vm = new MainWindowViewModel();
         vm.Attach(runtime);
 
         vm.SelectedNavigation = vm.Navigation.Single(item => item.Key == PageKey.Settings);
 
-        Assert.Equal(0, stub.GetCallCount);
+        Assert.True(vm.IsSettings);
     }
 
     // PublisherRuntime.Create falls back to the real, shared RelayPreferenceStore.DefaultPath
@@ -154,18 +225,37 @@ public sealed class MainWindowViewModelStateTests
     private static RelayPreferenceStore CreateTempRelayPreference() =>
         new(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "relay-preferences.json"));
 
-    private sealed class StubRelaySettingsApiClient : IRelaySettingsApiClient
+    /// <summary>Always succeeds, immediately, with no network call — the seam that lets a
+    /// device-identity bootstrap be driven to a genuine success in a test.</summary>
+    private sealed class FakeDeviceIdentityApiClient : IDeviceIdentityApiClient
     {
-        public int GetCallCount { get; private set; }
+        public Task<BootstrapDeviceResponse> BootstrapAsync(
+            BootstrapDeviceRequest request, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new BootstrapDeviceResponse(Guid.NewGuid(), "device-secret", 1));
 
-        public Task<RelaySettingsResponse> GetAsync(CancellationToken cancellationToken = default)
+        public Task<DeviceTokenResponse> TokenAsync(
+            DeviceTokenRequest request, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new DeviceTokenResponse("device-token", DateTimeOffset.UtcNow.AddHours(1), []));
+    }
+
+    private sealed class InMemoryFakeDeviceCredentialStore : IDeviceCredentialStore
+    {
+        private DeviceCredential? stored;
+
+        public Task<DeviceCredentialStorageResult> SaveAsync(DeviceCredential credential, CancellationToken cancellationToken = default)
         {
-            GetCallCount++;
-            return Task.FromResult(new RelaySettingsResponse("automatic", [], false));
+            stored = credential;
+            return Task.FromResult(DeviceCredentialStorageResult.Success(credential));
         }
 
-        public Task<RelaySettingsResponse> UpdateAsync(UpdateRelaySettingsRequest request, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new RelaySettingsResponse("automatic", [], false));
+        public Task<DeviceCredentialStorageResult> LoadAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(stored is null ? DeviceCredentialStorageResult.Success() : DeviceCredentialStorageResult.Success(stored));
+
+        public Task<DeviceCredentialStorageResult> DeleteAsync(CancellationToken cancellationToken = default)
+        {
+            stored = null;
+            return Task.FromResult(DeviceCredentialStorageResult.Success());
+        }
     }
 
     private sealed class FakeAudio : IAudioCaptureService
@@ -186,9 +276,9 @@ public sealed class MainWindowViewModelStateTests
     }
 
     [Fact]
-    public void All_destinations_are_navigable()
+    public void All_destinations_are_navigable_once_the_shell_unlocks()
     {
-        var vm = new MainWindowViewModel();
+        var vm = MainWindowViewModel.CreatePreview();
 
         Assert.All(vm.Navigation, item => Assert.True(item.IsEnabled));
     }

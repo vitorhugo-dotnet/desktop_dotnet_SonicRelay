@@ -1,4 +1,5 @@
 using System.Net;
+using SonicRelay.Windows.ApiClient.WebRtc;
 using SonicRelay.Windows.Core.Authentication;
 
 namespace SonicRelay.Windows.ApiClient.Tests;
@@ -28,4 +29,15 @@ internal static class TestClient
     {
         BaseAddress = new Uri("https://backend.example/")
     };
+}
+
+/// <summary>A settable-response <see cref="IWebRtcApiClient"/> fake, for tests that only care
+/// about a single canned response and don't need <see cref="WebRtcApiClient"/>'s real HTTP/auth
+/// plumbing.</summary>
+internal sealed class FakeWebRtcApiClient : IWebRtcApiClient
+{
+    public required IceServersResponse Response { get; set; }
+
+    public Task<IceServersResponse> GetIceServersAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(Response);
 }

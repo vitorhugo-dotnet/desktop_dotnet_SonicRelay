@@ -1,7 +1,6 @@
 using SonicRelay.Windows.ApiClient.DeviceIdentity;
 using SonicRelay.Windows.ApiClient.Pairing;
 using SonicRelay.Windows.ApiClient.Sessions;
-using SonicRelay.Windows.ApiClient.Settings;
 using SonicRelay.Windows.ApiClient.WebRtc;
 using SonicRelay.Windows.Audio;
 using SonicRelay.Windows.Core.Audio;
@@ -41,7 +40,6 @@ public sealed class PublisherRuntime : IAsyncDisposable
         IWebRtcPublisher webRtcPublisher,
         WebRtcAudioBridge audioBridge,
         RelayPreferenceStore relayPreference,
-        IRelaySettingsApiClient relaySettingsApi,
         AudioQualityStore audioQuality,
         IAudioCaptureService audioCapture,
         AudioOutputPreferenceStore audioOutput,
@@ -56,7 +54,6 @@ public sealed class PublisherRuntime : IAsyncDisposable
         Workflow = workflow;
         BackendBaseUrl = backendBaseUrl;
         RelayPreference = relayPreference;
-        RelaySettingsApi = relaySettingsApi;
         AudioQuality = audioQuality;
         AudioCapture = audioCapture;
         AudioOutput = audioOutput;
@@ -72,7 +69,6 @@ public sealed class PublisherRuntime : IAsyncDisposable
     public PublisherWorkflow Workflow { get; }
     public Uri BackendBaseUrl { get; }
     public RelayPreferenceStore RelayPreference { get; }
-    public IRelaySettingsApiClient RelaySettingsApi { get; }
     public AudioQualityStore AudioQuality { get; }
     public IAudioCaptureService AudioCapture { get; }
     public AudioOutputPreferenceStore AudioOutput { get; }
@@ -87,17 +83,20 @@ public sealed class PublisherRuntime : IAsyncDisposable
     /// Linux — issue #32) and, optionally, its own device-credential store and
     /// audio-output preference store (Linux would use Secret Service instead of
     /// DPAPI); omitting either keeps the existing Windows-default behavior.
-    /// <paramref name="relaySettingsApiOverride"/> and <paramref name="relayPreferenceOverride"/>
-    /// exist for tests — the default backend-talking client and the default
-    /// on-disk preferences file are otherwise always used.
+    /// <paramref name="relayPreferenceOverride"/> exists for tests — the default on-disk
+    /// preferences file is otherwise always used. <paramref name="deviceIdentityApiClientOverride"/>
+    /// also exists only for tests: it is the narrowest seam that lets a test drive a
+    /// device-identity bootstrap through to a genuine success without a real backend,
+    /// since <see cref="DeviceIdentitySession"/> otherwise always talks over
+    /// <paramref name="backendBaseUrl"/>.
     /// </summary>
     public static PublisherRuntime Create(
         Uri backendBaseUrl,
         IAudioCaptureService audioCapture,
         IDeviceCredentialStore? credentialStoreOverride = null,
         AudioOutputPreferenceStore? audioOutputPreferenceOverride = null,
-        IRelaySettingsApiClient? relaySettingsApiOverride = null,
-        RelayPreferenceStore? relayPreferenceOverride = null)
+        RelayPreferenceStore? relayPreferenceOverride = null,
+        IDeviceIdentityApiClient? deviceIdentityApiClientOverride = null)
     {
         ArgumentNullException.ThrowIfNull(backendBaseUrl);
         ArgumentNullException.ThrowIfNull(audioCapture);
@@ -113,7 +112,7 @@ public sealed class PublisherRuntime : IAsyncDisposable
         var http = new HttpClient { BaseAddress = normalized, Timeout = TimeSpan.FromSeconds(30) };
         var credentialStore = credentialStoreOverride ?? new UserScopedDeviceCredentialStore();
         var deviceIdentitySession = new DeviceIdentitySession(
-            new DeviceIdentityApiClient(http),
+            deviceIdentityApiClientOverride ?? new DeviceIdentityApiClient(http),
             credentialStore,
             Environment.MachineName);
 
@@ -123,16 +122,18 @@ public sealed class PublisherRuntime : IAsyncDisposable
         // a composite handler after both exist.
         var signalingHandlers = new CompositeSignalingMessageHandler();
         var signaling = new SignalingClient(configuration, deviceIdentitySession, [signalingHandlers]);
+        var relayPreference = relayPreferenceOverride ?? new RelayPreferenceStore();
         // ICE servers (including short-lived TURN credentials) come from the
         // backend, which serves the SonicRelay coturn deployment. The public
         // Google STUN fallback is a debug-build-only convenience for when the
         // backend request fails; release builds get an empty ICE server list
-        // instead of silently depending on Google's STUN server.
+        // instead of silently depending on Google's STUN server. The relay-mode/coturn
+        // preferences are per-device local settings (issue #26 follow-up), read live so a
+        // Settings change applies to the next ICE fetch without recreating the runtime.
         var iceServersProvider = new BackendIceServersProvider(
             new WebRtcApiClient(http, deviceIdentitySession),
+            () => new RelayPreferenceSnapshot(relayPreference.RelayMode, relayPreference.CoturnUrlOverride),
             allowGoogleStunDevFallback: AllowGoogleStunDevFallback);
-        var relayPreference = relayPreferenceOverride ?? new RelayPreferenceStore();
-        var relaySettingsApi = relaySettingsApiOverride ?? new RelaySettingsApiClient(http, deviceIdentitySession);
         var audioQuality = new AudioQualityStore();
         var peers = new PeerConnectionManager(
             new SipSorceryPeerConnectionFactory(
@@ -157,7 +158,8 @@ public sealed class PublisherRuntime : IAsyncDisposable
             credentialStore,
             new SessionApiClient(http, deviceIdentitySession),
             signaling,
-            audio);
+            audio,
+            new PairingApiClient(http, deviceIdentitySession));
         return new PublisherRuntime(
             http,
             workflow,
@@ -166,7 +168,6 @@ public sealed class PublisherRuntime : IAsyncDisposable
             webRtcPublisher,
             audioBridge,
             relayPreference,
-            relaySettingsApi,
             audioQuality,
             audio,
             audioOutput,
@@ -194,10 +195,6 @@ public sealed class PublisherRuntime : IAsyncDisposable
         // receives its own session.ended; tear down peer connections here when
         // the active session clears.
         var hasSession = state.SessionId is not null;
-        if (!hadActiveSession && hasSession)
-        {
-            _ = RefreshRelaySettingsAsync();
-        }
         if (hadActiveSession && !hasSession)
         {
             _ = peers.RemoveAllAsync();
@@ -214,23 +211,6 @@ public sealed class PublisherRuntime : IAsyncDisposable
             ["audio"] = state.AudioState.ToString(),
             ["viewerCount"] = state.ViewerCount.ToString(System.Globalization.CultureInfo.InvariantCulture)
         });
-    }
-
-    private async Task RefreshRelaySettingsAsync()
-    {
-        try
-        {
-            var response = await RelaySettingsApi.GetAsync();
-            await RelayPreference.ApplyFetchedRelayModeAsync(response.RelayMode);
-        }
-        catch (Exception exception) when (exception is not OutOfMemoryException)
-        {
-            // Best-effort — a stale local RelayMode only affects the client-side ICE transport
-            // policy for the session about to start, never security or the TURN entries
-            // themselves (those are decided server-side, live, per connection).
-            _ = WriteDiagnosticAsync("runtime", "Could not refresh relay settings before session start.",
-                new Dictionary<string, string> { ["error"] = exception.Message });
-        }
     }
 
     private async Task WriteDiagnosticAsync(string category, string message, IReadOnlyDictionary<string, string> properties)

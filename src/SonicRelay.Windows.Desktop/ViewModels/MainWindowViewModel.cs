@@ -11,8 +11,8 @@ namespace SonicRelay.Windows.Desktop.ViewModels;
 /// into <see cref="PublisherWorkflow"/> calls once a runtime is attached. With no runtime
 /// (the standalone preview launch) the actions are disabled and the shell renders the
 /// representative snapshot, so the layout and design system stay verifiable without a
-/// backend. Pairing is an ordinary, always-reachable nav page like Audio/Session/Settings —
-/// not a full-shell gate keyed off device-identity bootstrap (issue #26 follow-up).
+/// backend. Pairing and Settings are always reachable; the remaining destinations are gated
+/// on device-identity bootstrap (<see cref="HasDeviceIdentity"/>).
 /// </summary>
 public sealed class MainWindowViewModel : ViewModelBase
 {
@@ -23,7 +23,10 @@ public sealed class MainWindowViewModel : ViewModelBase
     private PairingViewModel? pairing;
     private NavigationItem selectedNavigation;
     private bool clearLogsArmed;
+    private bool unpairConfirmationArmed;
     private string? diagnosticsActionMessage;
+    private bool hasDeviceIdentity;
+    private bool pairingHeldByUnpair;
 
     public MainWindowViewModel()
     {
@@ -36,20 +39,73 @@ public sealed class MainWindowViewModel : ViewModelBase
             new NavigationItem(PageKey.Diagnostics, "⚙", "Diagnostics"),
             new NavigationItem(PageKey.Settings, "⚑", "Settings"),
         ];
-        selectedNavigation = Navigation[0];
+        selectedNavigation = Navigation.Single(item => item.Key == PageKey.Pairing);
+        ApplyShellGate();
 
         CreateSessionCommand = new RelayCommand(() => Run(w => w.CreateSessionAsync()), () => ShellCommandAvailability.CreateSession(snapshot, HasWorkflow));
         StartAudioCommand = new RelayCommand(() => Run(w => w.StartAudioAsync()), () => ShellCommandAvailability.StartAudio(snapshot, HasWorkflow));
         StopAudioCommand = new RelayCommand(() => Run(w => w.StopAudioAsync()), () => ShellCommandAvailability.StopAudio(snapshot, HasWorkflow));
         EndSessionCommand = new RelayCommand(() => Run(w => w.EndSessionAsync()), () => ShellCommandAvailability.EndSession(snapshot, HasWorkflow));
         RetryCommand = new RelayCommand(() => Run(w => w.ReconnectSignalingAsync()), () => ShellCommandAvailability.Retry(snapshot, Shell.Capabilities, HasWorkflow));
-        LogoutCommand = new RelayCommand(LogoutAsync, () => ShellCommandAvailability.Logout(snapshot, Shell.Capabilities, HasWorkflow));
+        UnpairCommand = new RelayCommand(UnpairAsync, () => ShellCommandAvailability.Unpair(snapshot, Shell.Capabilities, HasWorkflow));
         ExportDiagnosticsCommand = new RelayCommand(ExportDiagnosticsAsync, () => runtime is not null);
         ClearDiagnosticsCommand = new RelayCommand(ClearDiagnosticsAsync, () => runtime is not null);
     }
 
     public IReadOnlyList<NavigationItem> Navigation { get; }
     public DashboardShellViewModel Shell { get; } = new();
+
+    /// <summary>
+    /// Whether this device has bootstrapped an identity. While false the shell is gated to
+    /// Pairing plus Settings: Settings must stay reachable so a wrong backend URL is always
+    /// correctable from inside the app, which is exactly what the old full-shell pairing gate
+    /// got wrong. Active pairings are deliberately not part of this — a device with an identity
+    /// but no pairing still gets the full shell.
+    /// </summary>
+    public bool HasDeviceIdentity
+    {
+        get => hasDeviceIdentity;
+        private set
+        {
+            if (!SetProperty(ref hasDeviceIdentity, value)) return;
+            ApplyShellGate();
+        }
+    }
+
+    /// <summary>
+    /// Enables/disables nav items for the current identity state and, on a genuine state
+    /// change, moves the selection off a page that just became unreachable (or off Pairing
+    /// once the shell unlocks — the normal cold-start case: gained an identity while parked
+    /// on Pairing only because the gate put them there, never having chosen it themselves).
+    ///
+    /// The second branch is guarded by <see cref="pairingHeldByUnpair"/>: <see cref="UnpairAsync"/>
+    /// deliberately places the user on Pairing and then immediately re-bootstraps a fresh
+    /// identity so the pairing surface shows a new QR/challenge without a restart. That
+    /// re-bootstrap flips <see cref="HasDeviceIdentity"/> true through this exact same
+    /// StateChanged path, and without the guard this branch would fire the instant it
+    /// succeeds — the expected common case — bouncing someone who just confirmed an unpair
+    /// straight onto an idle Dashboard with no explanation. The two navigations to Pairing
+    /// (gate-driven vs. deliberate-after-unpair) look identical from here except for that
+    /// latch, so it is the only way to tell them apart. It goes through
+    /// <see cref="AssignSelectedNavigation"/> rather than the public <see cref="SelectedNavigation"/>
+    /// setter so this bookkeeping navigation never itself clears the latch.
+    /// </summary>
+    private void ApplyShellGate()
+    {
+        foreach (var item in Navigation)
+        {
+            item.IsEnabled = hasDeviceIdentity || item.Key is PageKey.Pairing or PageKey.Settings;
+        }
+
+        if (!hasDeviceIdentity && SelectedNavigation.Key is not (PageKey.Pairing or PageKey.Settings))
+        {
+            AssignSelectedNavigation(Navigation.Single(item => item.Key == PageKey.Pairing));
+        }
+        else if (hasDeviceIdentity && SelectedNavigation.Key == PageKey.Pairing && !pairingHeldByUnpair)
+        {
+            AssignSelectedNavigation(Navigation.Single(item => item.Key == PageKey.Dashboard));
+        }
+    }
 
     /// <summary>
     /// The active pairing surface's data source: null until the runtime's device identity
@@ -67,34 +123,40 @@ public sealed class MainWindowViewModel : ViewModelBase
     public SettingsViewModel Settings { get; private set; } = new();
     public AudioPageViewModel Audio { get; private set; } = new();
 
-    /// <summary>The selected sidebar destination; bound two-way to the navigation rail.</summary>
+    /// <summary>
+    /// The selected sidebar destination; bound two-way to the navigation rail. Any assignment
+    /// through this public setter — a user's click, or code standing in for one — counts as a
+    /// deliberate choice of page and clears <see cref="pairingHeldByUnpair"/>, so an unrelated
+    /// later identity change goes back to the normal gate behaviour. <see cref="ApplyShellGate"/>'s
+    /// own bookkeeping navigations go through <see cref="AssignSelectedNavigation"/> directly so
+    /// they are not mistaken for that kind of deliberate choice.
+    /// </summary>
     public NavigationItem SelectedNavigation
     {
         get => selectedNavigation;
         set
         {
-            // The rail can push a null selection transiently; keep the last valid page.
-            if (value is null || !SetProperty(ref selectedNavigation, value)) return;
-            RaisePropertyChanged(nameof(CurrentPage));
-            RaisePropertyChanged(nameof(IsDashboard));
-            RaisePropertyChanged(nameof(IsPairing));
-            RaisePropertyChanged(nameof(IsSession));
-            RaisePropertyChanged(nameof(IsDiagnostics));
-            RaisePropertyChanged(nameof(IsAudio));
-            RaisePropertyChanged(nameof(IsSettings));
-            RaisePropertyChanged(nameof(PageTitle));
-            RaisePropertyChanged(nameof(PageSubtitle));
-
-            // "Settings page opened" is one of the relay-settings sync trigger points (design
-            // spec): without this, pairing once, changing the relay mode/coturn URL from another
-            // app, then opening Settings here later would show a stale value and silently revert
-            // the other app's change on the next save. Best-effort, fire-and-forget — matching
-            // every other relay-settings refresh in this plan.
-            if (value.Key == PageKey.Settings && Settings.HasDeviceIdentity)
-            {
-                _ = Settings.RefreshRelaySettingsAsync();
-            }
+            if (!AssignSelectedNavigation(value)) return;
+            pairingHeldByUnpair = false;
         }
+    }
+
+    /// <summary>Core of the <see cref="SelectedNavigation"/> setter, without the
+    /// deliberate-choice bookkeeping — see that property's doc comment.</summary>
+    private bool AssignSelectedNavigation(NavigationItem? value)
+    {
+        // The rail can push a null selection transiently; keep the last valid page.
+        if (value is null || !SetProperty(ref selectedNavigation, value)) return false;
+        RaisePropertyChanged(nameof(CurrentPage));
+        RaisePropertyChanged(nameof(IsDashboard));
+        RaisePropertyChanged(nameof(IsPairing));
+        RaisePropertyChanged(nameof(IsSession));
+        RaisePropertyChanged(nameof(IsDiagnostics));
+        RaisePropertyChanged(nameof(IsAudio));
+        RaisePropertyChanged(nameof(IsSettings));
+        RaisePropertyChanged(nameof(PageTitle));
+        RaisePropertyChanged(nameof(PageSubtitle));
+        return true;
     }
 
     public PageKey CurrentPage => selectedNavigation.Key;
@@ -131,6 +193,28 @@ public sealed class MainWindowViewModel : ViewModelBase
         private set => SetProperty(ref clearLogsArmed, value);
     }
 
+    /// <summary>
+    /// Two-click confirmation for the destructive top-bar unpair action, mirroring
+    /// <see cref="ClearLogsArmed"/> rather than a modal dialog: the first click arms, the
+    /// second acts.
+    /// </summary>
+    public bool UnpairConfirmationArmed
+    {
+        get => unpairConfirmationArmed;
+        private set
+        {
+            if (SetProperty(ref unpairConfirmationArmed, value))
+                RaisePropertyChanged(nameof(UnpairButtonLabel));
+        }
+    }
+
+    public string UnpairButtonLabel => unpairConfirmationArmed
+        ? "Confirm unpair — phones must pair again"
+        : "Unpair this device";
+
+    public void ArmUnpair() => UnpairConfirmationArmed = true;
+    public void DisarmUnpair() => UnpairConfirmationArmed = false;
+
     public string? DiagnosticsActionMessage
     {
         get => diagnosticsActionMessage;
@@ -154,7 +238,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     public RelayCommand StopAudioCommand { get; }
     public RelayCommand EndSessionCommand { get; }
     public RelayCommand RetryCommand { get; }
-    public RelayCommand LogoutCommand { get; }
+    public RelayCommand UnpairCommand { get; }
     public RelayCommand ExportDiagnosticsCommand { get; }
     public RelayCommand ClearDiagnosticsCommand { get; }
 
@@ -179,7 +263,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         Settings = next is null
             ? new SettingsViewModel()
-            : new SettingsViewModel(next.BackendBaseUrl.ToString(), next.RelayPreference, next.AudioQuality, next.RelaySettingsApi, ChangeBackendUrlAsync);
+            : new SettingsViewModel(next.BackendBaseUrl.ToString(), next.RelayPreference, next.AudioQuality, ChangeBackendUrlAsync);
         Audio = next is null
             ? new AudioPageViewModel()
             : new AudioPageViewModel(next.AudioCapture, next.AudioOutput);
@@ -200,6 +284,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         Shell.Update(state, diagnostics, forceRelay);
         Settings.UpdateAuthentication(state?.HasDeviceIdentity ?? false);
+        HasDeviceIdentity = state?.HasDeviceIdentity ?? false;
         // The runtime only creates its PairingViewModel once device-identity bootstrap
         // succeeds (PublisherRuntime.InitializeDeviceIdentityAsync), so this stays null —
         // and the pairing view renders its disconnected placeholder — until then.
@@ -224,19 +309,41 @@ public sealed class MainWindowViewModel : ViewModelBase
         workflow is null ? Task.CompletedTask : action(workflow);
 
     /// <summary>
-    /// Signs out (issue #26 follow-up): clears the local device identity, switches the shell
-    /// to the Pairing nav page so the user actually sees it (rather than relying on a
-    /// snapshot-derived gate that a fast automatic re-bootstrap could flip straight back to
-    /// the dashboard before it ever rendered), and then immediately re-bootstraps a fresh
-    /// device identity so the pairing surface shows a new QR/challenge right away rather than
-    /// requiring an app restart. A backend hiccup during re-bootstrap simply leaves the
-    /// pairing page for a manual retry. Internal so tests can drive it directly (issue #26).
+    /// Two-click confirmation, matching the Clear-logs affordance in this same view model
+    /// rather than introducing a modal dialog dependency: the first click arms, the second
+    /// acts. Unpairing forces every paired phone to pair again, so it must not be a
+    /// single stray click on the top bar.
+    ///
+    /// On confirm: revokes this device's pairings and clears the local device identity
+    /// (<see cref="PublisherWorkflow.UnpairAsync"/>), switches the shell to the Pairing nav
+    /// page so the user actually sees it (rather than relying on a snapshot-derived gate that
+    /// a fast automatic re-bootstrap could flip straight back to the dashboard before it ever
+    /// rendered), and then immediately re-bootstraps a fresh device identity so the pairing
+    /// surface shows a new QR/challenge right away rather than requiring an app restart.
+    ///
+    /// That re-bootstrap succeeding is the expected common case, and it flips
+    /// <see cref="HasDeviceIdentity"/> true through the same path <see cref="ApplyShellGate"/>
+    /// watches to auto-advance a cold start off Pairing — so <see cref="pairingHeldByUnpair"/>
+    /// is set right after forcing the selection, holding the gate off Pairing until the user
+    /// deliberately navigates somewhere themselves (see the <see cref="SelectedNavigation"/>
+    /// setter). Otherwise whoever just confirmed an unpair would be bounced straight onto an
+    /// idle Dashboard with no explanation, never seeing the fresh pairing code the re-bootstrap
+    /// just produced. A backend hiccup during re-bootstrap simply leaves the pairing page for a
+    /// manual retry. Internal so tests can drive it directly (issue #26).
     /// </summary>
-    internal async Task LogoutAsync()
+    internal async Task UnpairAsync()
     {
         if (workflow is null) return;
-        await workflow.LogoutAsync();
+        if (!UnpairConfirmationArmed)
+        {
+            ArmUnpair();
+            return;
+        }
+
+        DisarmUnpair();
+        await workflow.UnpairAsync();
         SelectedNavigation = Navigation.Single(item => item.Key == PageKey.Pairing);
+        pairingHeldByUnpair = true;
         if (runtime is not null)
         {
             try { await runtime.InitializeDeviceIdentityAsync(); }
@@ -330,7 +437,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         StopAudioCommand.RaiseCanExecuteChanged();
         EndSessionCommand.RaiseCanExecuteChanged();
         RetryCommand.RaiseCanExecuteChanged();
-        LogoutCommand.RaiseCanExecuteChanged();
+        UnpairCommand.RaiseCanExecuteChanged();
         ExportDiagnosticsCommand.RaiseCanExecuteChanged();
         ClearDiagnosticsCommand.RaiseCanExecuteChanged();
     }
@@ -379,7 +486,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private static PublisherSnapshot PreviewSnapshot() => new()
     {
         IsAuthenticated = true,
-        UserEmail = "publisher@sonicrelay.app",
+        DeviceId = Guid.NewGuid(),
         DeviceName = Environment.MachineName,
         SessionId = Guid.NewGuid(),
         SessionCode = "K7DRRP",

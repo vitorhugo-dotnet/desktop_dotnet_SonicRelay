@@ -1,4 +1,5 @@
 using SonicRelay.Windows.ApiClient.Errors;
+using SonicRelay.Windows.ApiClient.Pairing;
 using SonicRelay.Windows.ApiClient.Sessions;
 using SonicRelay.Windows.Audio;
 using SonicRelay.Windows.Core.Authentication;
@@ -14,6 +15,7 @@ public sealed class PublisherWorkflow : IAsyncDisposable
     private readonly IAudioCaptureService audio;
     private readonly IDeviceAccessTokenProvider deviceIdentity;
     private readonly IDeviceCredentialStore deviceCredentials;
+    private readonly IPairingApiClient pairings;
     private readonly SemaphoreSlim operationLock = new(1, 1);
     private readonly object stateLock = new();
     private bool disposed;
@@ -23,13 +25,15 @@ public sealed class PublisherWorkflow : IAsyncDisposable
         IDeviceCredentialStore deviceCredentials,
         ISessionApiClient sessions,
         ISignalingClient signaling,
-        IAudioCaptureService audio)
+        IAudioCaptureService audio,
+        IPairingApiClient pairings)
     {
         this.deviceIdentity = deviceIdentity ?? throw new ArgumentNullException(nameof(deviceIdentity));
         this.deviceCredentials = deviceCredentials ?? throw new ArgumentNullException(nameof(deviceCredentials));
         this.sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
         this.signaling = signaling ?? throw new ArgumentNullException(nameof(signaling));
         this.audio = audio ?? throw new ArgumentNullException(nameof(audio));
+        this.pairings = pairings ?? throw new ArgumentNullException(nameof(pairings));
         signaling.StateChanged += OnSignalingStateChanged;
         audio.StateChanged += OnAudioStateChanged;
         audio.LevelChanged += OnAudioLevelChanged;
@@ -125,13 +129,19 @@ public sealed class PublisherWorkflow : IAsyncDisposable
     }
 
     /// <summary>
-    /// Signs out of this publisher device: tears down any active session, then forgets
-    /// the local device identity so the shell falls back to the pairing surface and a
-    /// fresh device identity — and pairing challenge — can be bootstrapped without
-    /// restarting the app. Needed because a stale or rejected device credential
-    /// otherwise has no recovery path short of a restart (issue #26 follow-up).
+    /// Unpairs this device: tears down any active session, revokes this device's active
+    /// pairings on the backend, then forgets the local identity so a fresh one — and a fresh
+    /// pairing challenge — can be bootstrapped without restarting.
+    ///
+    /// Revocation comes first because clearing the identity re-bootstraps into a *new* DeviceId,
+    /// which would leave every existing pairing row pointing at a publisher that no longer
+    /// exists — the viewer would keep reporting "invalid code" for a perfectly good code.
+    ///
+    /// A failed revocation does not block the reset: the whole point of this action is
+    /// recovering from a rejected or unreachable credential, so an unreachable backend must not
+    /// trap the user. The failure is logged instead of swallowed.
     /// </summary>
-    public Task LogoutAsync(CancellationToken cancellationToken = default) =>
+    public Task UnpairAsync(CancellationToken cancellationToken = default) =>
         ExecuteAsync(async token =>
         {
             if (State.SessionId is { } sessionId)
@@ -141,19 +151,48 @@ public sealed class PublisherWorkflow : IAsyncDisposable
                 try { await sessions.EndSessionAsync(sessionId, token); } catch { }
             }
 
+            if (State.DeviceId is { } deviceId)
+            {
+                try
+                {
+                    var active = await pairings.ListPairingsAsync(deviceId, token);
+                    var revoked = 0;
+                    var failed = 0;
+                    foreach (var pairing in active.Where(x => x.Status == "active"))
+                    {
+                        try
+                        {
+                            await pairings.RevokePairingAsync(pairing.PairingId, token);
+                            revoked++;
+                        }
+                        catch (Exception exception) when (exception is not OperationCanceledException)
+                        {
+                            failed++;
+                        }
+                    }
+
+                    if (failed > 0)
+                    {
+                        AddLog($"Pairings could not be fully revoked: {revoked} revoked, {failed} could not be revoked.");
+                    }
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    AddLog($"Pairings could not be revoked: {exception.Message}");
+                }
+            }
+
             await deviceIdentity.ResetAsync(token);
 
             SetState(state => state with
             {
                 IsAuthenticated = false,
-                UserDisplayName = null,
-                UserEmail = null,
                 DeviceId = null,
                 DeviceName = null,
                 SessionId = null,
                 SessionCode = null,
                 ViewerCount = 0
-            }, "Signed out.");
+            }, "Device unpaired.");
         }, cancellationToken);
 
     private async Task RefreshViewerCountCoreAsync(CancellationToken cancellationToken)
@@ -193,8 +232,6 @@ public sealed class PublisherWorkflow : IAsyncDisposable
                 SetState(state => state with
                 {
                     IsAuthenticated = false,
-                    UserDisplayName = null,
-                    UserEmail = null,
                     DeviceId = null,
                     DeviceName = null,
                     ErrorMessage = message

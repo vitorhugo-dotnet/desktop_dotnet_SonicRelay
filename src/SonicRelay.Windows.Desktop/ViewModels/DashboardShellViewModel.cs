@@ -17,7 +17,6 @@ public sealed class DashboardShellViewModel : ViewModelBase
     private DashboardViewModel model = new();
     private PublisherUiState uiState = PublisherUiState.LoggedOut;
     private PublisherUiCapabilities capabilities = PublisherUiCapabilities.For(PublisherUiState.LoggedOut);
-    private string? accountEmail;
     private string? deviceName;
     private IReadOnlyList<string> activityLog = [];
 
@@ -88,12 +87,12 @@ public sealed class DashboardShellViewModel : ViewModelBase
     public string BandwidthProfileText { get; } = "Opus / WebRTC";
 
     // ---- Account ----
-    public string? AccountEmail
+    public string? DeviceName
     {
-        get => accountEmail;
+        get => deviceName;
         private set
         {
-            if (SetProperty(ref accountEmail, value))
+            if (SetProperty(ref deviceName, value))
             {
                 RaisePropertyChanged(nameof(AccountLabel));
                 RaisePropertyChanged(nameof(AccountInitials));
@@ -101,18 +100,11 @@ public sealed class DashboardShellViewModel : ViewModelBase
         }
     }
 
-    public string? DeviceName
-    {
-        get => deviceName;
-        private set
-        {
-            if (SetProperty(ref deviceName, value))
-                RaisePropertyChanged(nameof(AccountLabel));
-        }
-    }
-
-    public string AccountLabel => accountEmail ?? "Not signed in";
-    public string AccountInitials => Initials(accountEmail);
+    // Identity was removed from the backend, so there is no user to name here: the top bar
+    // identifies the *device*. The previous label read snapshot.UserEmail, which has been
+    // permanently null since then and could only ever render "Not signed in".
+    public string AccountLabel => string.IsNullOrWhiteSpace(deviceName) ? "No device identity" : deviceName;
+    public string AccountInitials => Initials(deviceName);
 
     // ---- Technical console ----
     public IReadOnlyList<string> ActivityLog
@@ -132,7 +124,6 @@ public sealed class DashboardShellViewModel : ViewModelBase
         var previous = uiState;
         model = DashboardViewModel.From(snapshot, diagnostics, forceRelay);
         UiState = PublisherUiStateResolver.Resolve(snapshot, diagnostics, forceRelay, previous);
-        AccountEmail = snapshot?.UserEmail;
         DeviceName = snapshot?.DeviceName;
         ActivityLog = snapshot?.ActivityLog ?? [];
         RaiseModelProperties();
@@ -196,14 +187,16 @@ public sealed class DashboardShellViewModel : ViewModelBase
         return string.Create(CultureInfo.CurrentCulture, $"{db:F1} dB");
     }
 
-    private static string Initials(string? email)
+    // Splits only on space and underscore: a hyphen commonly appears *inside* a Windows
+    // machine name (e.g. "VITOR-DESKTOP", "DESKTOP-7QK2P1") rather than separating two
+    // distinct words, so it is not treated as a word boundary here.
+    private static string Initials(string? deviceName)
     {
-        if (string.IsNullOrWhiteSpace(email)) return "–";
-        var name = email.Split('@')[0];
-        var parts = name.Split(['.', '_', '-'], StringSplitOptions.RemoveEmptyEntries);
+        if (string.IsNullOrWhiteSpace(deviceName)) return "–";
+        var parts = deviceName.Split([' ', '_'], StringSplitOptions.RemoveEmptyEntries);
         var initials = parts.Length >= 2
             ? $"{parts[0][0]}{parts[1][0]}"
-            : name[..Math.Min(2, name.Length)];
+            : deviceName[..Math.Min(2, deviceName.Length)];
         return initials.ToUpper(CultureInfo.CurrentCulture);
     }
 }

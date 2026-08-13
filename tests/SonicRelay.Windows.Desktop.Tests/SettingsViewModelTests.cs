@@ -1,4 +1,3 @@
-using SonicRelay.Windows.ApiClient.Settings;
 using SonicRelay.Windows.Core.Audio;
 using SonicRelay.Windows.Core.Configuration;
 using SonicRelay.Windows.Desktop.ViewModels;
@@ -103,64 +102,90 @@ public sealed class SettingsViewModelBackendUrlTests
     private static SettingsViewModel MakeConnectedViewModel(Func<string, Task<string?>> changeBackendUrl) =>
         new(
             "https://old-backend.example.test/",
-            new SonicRelay.Windows.Core.Configuration.RelayPreferenceStore(
+            new RelayPreferenceStore(
                 Path.Combine(Path.GetTempPath(), $"sonicrelay-settings-vm-test-{Guid.NewGuid():N}.json")),
-            new SonicRelay.Windows.Core.Audio.AudioQualityStore(
+            new AudioQualityStore(
                 Path.Combine(Path.GetTempPath(), $"sonicrelay-settings-vm-test-quality-{Guid.NewGuid():N}.json")),
             changeBackendUrl);
 }
 
-public sealed class SettingsViewModelRelaySettingsTests
+/// <summary>
+/// Relay mode and the coturn override are per-device local preferences (issue #26 follow-up —
+/// the backend row these used to sync through was global to the whole deployment, so one
+/// device editing the coturn URL changed the relay for every other device). These tests cover
+/// the local-store round trip and the "never pre-filled with the backend's value" design point
+/// directly, replacing the old server-sync tests (refresh/save-through-to-server, an unfetched
+/// gate on the save command) that no longer apply now that the backend endpoint is gone.
+/// </summary>
+public sealed class SettingsViewModelRelayPreferenceTests : IDisposable
 {
-    [Fact]
-    public async Task Refresh_applies_the_servers_relay_mode_and_turn_uri()
-    {
-        var api = new StubRelaySettingsApiClient(
-            get: new RelaySettingsResponse("forceRelay", ["turn:mine.example.com:3478"], true));
-        var vm = MakeConnectedViewModel(api);
-
-        await vm.RefreshRelaySettingsAsync();
-
-        Assert.Equal("forceRelay", vm.RelayMode);
-        Assert.Equal("turn:mine.example.com:3478", vm.TurnUriInput);
-        Assert.Null(vm.RelaySettingsError);
-    }
+    private readonly string dir = Path.Combine(Path.GetTempPath(), "sonic-settings-relay-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
-    public async Task Saving_the_relay_mode_writes_through_to_the_server_and_applies_the_response()
+    public async Task Saving_the_relay_mode_writes_straight_through_to_the_local_store()
     {
-        var api = new StubRelaySettingsApiClient(
-            update: new RelaySettingsResponse("disableFallback", [], false));
-        var vm = MakeConnectedViewModel(api);
-        vm.RelayMode = "disableFallback";
+        var (relay, vm) = MakeConnectedViewModel();
+        vm.RelayMode = RelayModes.DisableFallback;
 
         await vm.SaveRelayModeAsync();
 
-        Assert.Equal("disableFallback", api.LastUpdateRequest!.RelayMode);
-        Assert.Equal("disableFallback", vm.RelayMode);
+        Assert.Equal(RelayModes.DisableFallback, relay.RelayMode);
     }
 
     [Fact]
-    public async Task Saving_the_turn_uri_sends_it_as_a_single_element_list()
+    public async Task Saving_the_turn_uri_writes_straight_through_to_the_local_store()
     {
-        var api = new StubRelaySettingsApiClient(
-            get: new RelaySettingsResponse("automatic", [], false),
-            update: new RelaySettingsResponse("automatic", ["turn:new.example.com:3478"], false));
-        var vm = MakeConnectedViewModel(api);
-        // SaveTurnUriAsync refuses to run until a real server value has been fetched at least
-        // once (RelaySettingsLoaded) — see the coturn-wipe-guard tests below.
-        await vm.RefreshRelaySettingsAsync();
-        vm.TurnUriInput = "turn:new.example.com:3478";
+        var (relay, vm) = MakeConnectedViewModel();
+        vm.TurnUriInput = "turn:mine.example.com:3478";
 
         await vm.SaveTurnUriAsync();
 
-        Assert.Equal(["turn:new.example.com:3478"], api.LastUpdateRequest!.TurnUris);
+        Assert.Equal("turn:mine.example.com:3478", relay.CoturnUrlOverride);
+    }
+
+    [Fact]
+    public async Task A_blank_turn_uri_clears_the_override()
+    {
+        var (relay, vm) = MakeConnectedViewModel();
+        await relay.SetCoturnUrlOverrideAsync("turn:mine.example.com:3478");
+        vm.TurnUriInput = "   ";
+
+        await vm.SaveTurnUriAsync();
+
+        Assert.Null(relay.CoturnUrlOverride);
+    }
+
+    [Fact]
+    public void The_coturn_field_never_starts_prefilled_with_a_backend_value()
+    {
+        // Design point: the field starts blank unless the user set their own override before —
+        // it must never disclose a value the app itself fetched from a server, because there is
+        // no such fetch any more.
+        var (_, vm) = MakeConnectedViewModel();
+
+        Assert.Equal("", vm.TurnUriInput);
+    }
+
+    [Fact]
+    public void TurnUriInput_starts_from_the_stores_own_prior_override()
+    {
+        var relayPath = Path.Combine(dir, "prefs.json");
+        Directory.CreateDirectory(dir);
+        var seeded = new RelayPreferenceStore(relayPath);
+        seeded.SetCoturnUrlOverrideAsync("turn:previously-saved.example.com:3478").GetAwaiter().GetResult();
+
+        var vm = new SettingsViewModel(
+            "https://backend.example.test/",
+            new RelayPreferenceStore(relayPath),
+            new AudioQualityStore(Path.Combine(dir, "quality.json")));
+
+        Assert.Equal("turn:previously-saved.example.com:3478", vm.TurnUriInput);
     }
 
     [Fact]
     public void Coturn_field_is_hidden_until_the_device_has_an_identity()
     {
-        var vm = MakeConnectedViewModel(new StubRelaySettingsApiClient());
+        var (_, vm) = MakeConnectedViewModel();
 
         Assert.False(vm.HasDeviceIdentity);
 
@@ -170,179 +195,89 @@ public sealed class SettingsViewModelRelaySettingsTests
     }
 
     [Fact]
-    public void Device_identity_becoming_available_auto_refreshes_relay_settings()
+    public void Save_turn_uri_canExecute_requires_a_device_identity_but_nothing_else()
     {
-        // Regression test: TurnUriInput starts as "" and SaveTurnUriAsync maps a blank input to
-        // an empty list, so if the coturn field became visible without ever being populated, the
-        // very first "Save coturn URL" click would silently wipe the backend's global TURN
-        // override for every paired device. UpdateAuthentication(true) — the false-to-true
-        // transition, i.e. the moment the coturn field becomes visible — must fetch the real
-        // server value first.
-        var api = new StubRelaySettingsApiClient(
-            get: new RelaySettingsResponse("forceRelay", ["turn:auto.example.com:3478"], true));
-        var vm = MakeConnectedViewModel(api);
-        Assert.Equal("", vm.TurnUriInput);
+        var (_, vm) = MakeConnectedViewModel();
 
-        vm.UpdateAuthentication(true);
-
-        Assert.Equal("forceRelay", vm.RelayMode);
-        Assert.Equal("turn:auto.example.com:3478", vm.TurnUriInput);
-        Assert.Null(vm.RelaySettingsError);
-    }
-
-    [Fact]
-    public void Repeated_true_updates_do_not_refresh_again()
-    {
-        var api = new StubRelaySettingsApiClient(
-            get: new RelaySettingsResponse("forceRelay", ["turn:auto.example.com:3478"], true));
-        var vm = MakeConnectedViewModel(api);
-        vm.UpdateAuthentication(true);
-        Assert.Equal(1, api.GetCallCount);
-
-        vm.UpdateAuthentication(true);
-
-        Assert.Equal(1, api.GetCallCount);
-    }
-
-    [Fact]
-    public async Task An_unrecognized_relay_mode_from_the_server_does_not_crash_and_leaves_state_unchanged()
-    {
-        // Regression test: RelayModes is a closed 3-value set owned by a separately-versioned
-        // backend repo that could add a fourth mode someday; that must surface as an error, not
-        // an ArgumentException thrown out of RelayPreferenceStore.PersistAsync past this method's
-        // callers (an async void RelayCommand.Execute with no catch — an unhandled exception
-        // there crashes the whole process).
-        var api = new StubRelaySettingsApiClient(
-            update: new RelaySettingsResponse("bogus-mode", ["turn:should-not-apply.example.com:3478"], false));
-        var vm = MakeConnectedViewModel(api);
-        var previousRelayMode = vm.RelayMode;
-        var previousTurnUriInput = vm.TurnUriInput;
-
-        var exception = await Record.ExceptionAsync(vm.SaveRelayModeAsync);
-
-        Assert.Null(exception);
-        Assert.Equal(previousRelayMode, vm.RelayMode);
-        Assert.Equal(previousTurnUriInput, vm.TurnUriInput);
-        Assert.NotNull(vm.RelaySettingsError);
-    }
-
-    [Fact]
-    public async Task A_null_turn_uris_list_from_the_server_is_treated_as_empty_not_a_crash()
-    {
-        // System.Text.Json deserialization can leave a non-nullable list property null if the
-        // backend ever omits the field from the JSON body; .Count on that would NullReferenceException.
-        var api = new StubRelaySettingsApiClient(get: new RelaySettingsResponse("automatic", null!, false));
-        var vm = MakeConnectedViewModel(api);
-
-        var exception = await Record.ExceptionAsync(vm.RefreshRelaySettingsAsync);
-
-        Assert.Null(exception);
-        Assert.Equal("", vm.TurnUriInput);
-        Assert.Null(vm.RelaySettingsError);
-    }
-
-    [Fact]
-    public async Task An_unexpected_exception_from_the_api_client_does_not_escape()
-    {
-        var api = new ThrowingRelaySettingsApiClient();
-        var vm = MakeConnectedViewModel(api);
-
-        var exception = await Record.ExceptionAsync(vm.SaveRelayModeAsync);
-
-        Assert.Null(exception);
-        Assert.NotNull(vm.RelaySettingsError);
-    }
-
-    [Fact]
-    public async Task Saving_the_coturn_url_is_blocked_until_relay_settings_have_loaded_successfully()
-    {
-        var api = new StubRelaySettingsApiClient();
-        var vm = MakeConnectedViewModel(api);
-        vm.TurnUriInput = "turn:should-not-be-saved.example.com:3478";
         Assert.False(vm.SaveTurnUriCommand.CanExecute(null));
 
-        await vm.SaveTurnUriAsync();
+        vm.UpdateAuthentication(true);
 
-        Assert.Null(api.LastUpdateRequest);
-        Assert.NotNull(vm.RelaySettingsError);
+        Assert.True(vm.SaveTurnUriCommand.CanExecute(null));
     }
 
     [Fact]
-    public async Task A_failed_auto_refresh_still_blocks_saving_the_coturn_url()
+    public async Task Saving_the_relay_mode_does_not_crash_when_the_store_cannot_write_to_disk()
     {
-        // Closes the loop on the coturn-wipe fix: the earlier fix made UpdateAuthentication
-        // auto-fetch on the success path, but a transient failure (backend briefly unreachable,
-        // 401, timeout) left TurnUriInput blank-but-still-saveable, with only an easy-to-miss
-        // error message as the only defense.
-        var api = new FlakyGetRelaySettingsApiClient();
-        var vm = MakeConnectedViewModel(api);
+        // RelayCommand.Execute (SaveRelayModeCommand's actual caller in production) is async
+        // void with no catch of its own and this app has no global unhandled-exception handler,
+        // so an exception escaping SaveRelayModeAsync would take the whole process down. The
+        // preferences path here has a regular file standing in for one of its directory
+        // segments, so RelayPreferenceStore.PersistAsync's Directory.CreateDirectory genuinely
+        // throws (DirectoryNotFoundException, an IOException) instead of an artificial stand-in.
+        var (_, vm, unwritablePath) = MakeViewModelOverAnUnwritablePath();
+        try
+        {
+            vm.RelayMode = RelayModes.ForceRelay;
 
-        vm.UpdateAuthentication(true);
+            var exception = await Record.ExceptionAsync(vm.SaveRelayModeAsync);
 
-        Assert.True(vm.HasDeviceIdentity);
-        Assert.NotNull(vm.RelaySettingsError);
-        Assert.False(vm.SaveTurnUriCommand.CanExecute(null));
-
-        vm.TurnUriInput = "turn:should-not-be-saved.example.com:3478";
-        await vm.SaveTurnUriAsync();
-
-        Assert.Null(api.LastUpdateRequest);
+            Assert.Null(exception);
+        }
+        finally
+        {
+            File.Delete(unwritablePath);
+        }
     }
 
-    private static SettingsViewModel MakeConnectedViewModel(IRelaySettingsApiClient api) =>
-        new(
+    [Fact]
+    public async Task Saving_the_turn_uri_does_not_crash_when_the_store_cannot_write_to_disk()
+    {
+        var (_, vm, unwritablePath) = MakeViewModelOverAnUnwritablePath();
+        try
+        {
+            vm.TurnUriInput = "turn:mine.example.com:3478";
+
+            var exception = await Record.ExceptionAsync(vm.SaveTurnUriAsync);
+
+            Assert.Null(exception);
+        }
+        finally
+        {
+            File.Delete(unwritablePath);
+        }
+    }
+
+    // A regular file standing in for a directory segment of the preferences path: Directory
+    // .CreateDirectory inside RelayPreferenceStore.PersistAsync then genuinely throws
+    // (DirectoryNotFoundException, an IOException) instead of relying on an artificial fake.
+    private static (RelayPreferenceStore Relay, SettingsViewModel ViewModel, string UnwritablePath) MakeViewModelOverAnUnwritablePath()
+    {
+        var fileStandingInForADirectory = Path.Combine(Path.GetTempPath(), "sonicrelay-unwritable-" + Guid.NewGuid().ToString("N"));
+        File.WriteAllText(fileStandingInForADirectory, "not a directory");
+        var relay = new RelayPreferenceStore(Path.Combine(fileStandingInForADirectory, "subdir", "prefs.json"));
+        var vm = new SettingsViewModel(
             "https://backend.example.test/",
-            new SonicRelay.Windows.Core.Configuration.RelayPreferenceStore(
-                Path.Combine(Path.GetTempPath(), $"sonicrelay-settings-vm-relay-test-{Guid.NewGuid():N}.json")),
-            new SonicRelay.Windows.Core.Audio.AudioQualityStore(
-                Path.Combine(Path.GetTempPath(), $"sonicrelay-settings-vm-relay-test-quality-{Guid.NewGuid():N}.json")),
-            api,
+            relay,
+            new AudioQualityStore(Path.Combine(Path.GetTempPath(), $"sonicrelay-unwritable-quality-{Guid.NewGuid():N}.json")),
             _ => Task.FromResult<string?>(null));
-
-    private sealed class StubRelaySettingsApiClient(
-        RelaySettingsResponse? get = null, RelaySettingsResponse? update = null) : IRelaySettingsApiClient
-    {
-        public UpdateRelaySettingsRequest? LastUpdateRequest { get; private set; }
-        public int GetCallCount { get; private set; }
-
-        public Task<RelaySettingsResponse> GetAsync(CancellationToken cancellationToken = default)
-        {
-            GetCallCount++;
-            return Task.FromResult(get ?? new RelaySettingsResponse("automatic", [], false));
-        }
-
-        public Task<RelaySettingsResponse> UpdateAsync(UpdateRelaySettingsRequest request, CancellationToken cancellationToken = default)
-        {
-            LastUpdateRequest = request;
-            return Task.FromResult(update ?? new RelaySettingsResponse("automatic", [], false));
-        }
+        return (relay, vm, fileStandingInForADirectory);
     }
 
-    /// <summary>Throws something other than <c>ApiClientException</c> from every call, to prove
-    /// the widened <c>catch (Exception exception) when (exception is not OutOfMemoryException)</c>
-    /// clauses catch it too, not just the narrower API-specific exception type.</summary>
-    private sealed class ThrowingRelaySettingsApiClient : IRelaySettingsApiClient
+    private (RelayPreferenceStore Relay, SettingsViewModel ViewModel) MakeConnectedViewModel()
     {
-        public Task<RelaySettingsResponse> GetAsync(CancellationToken cancellationToken = default) =>
-            throw new InvalidOperationException("simulated unexpected failure");
-
-        public Task<RelaySettingsResponse> UpdateAsync(UpdateRelaySettingsRequest request, CancellationToken cancellationToken = default) =>
-            throw new InvalidOperationException("simulated unexpected failure");
+        Directory.CreateDirectory(dir);
+        var relay = new RelayPreferenceStore(Path.Combine(dir, "prefs.json"));
+        var vm = new SettingsViewModel(
+            "https://backend.example.test/",
+            relay,
+            new AudioQualityStore(Path.Combine(dir, "quality.json")),
+            _ => Task.FromResult<string?>(null));
+        return (relay, vm);
     }
 
-    /// <summary>GetAsync always fails; UpdateAsync tracks whether it was ever called (it must
-    /// not be, while relay settings have never successfully loaded).</summary>
-    private sealed class FlakyGetRelaySettingsApiClient : IRelaySettingsApiClient
+    public void Dispose()
     {
-        public UpdateRelaySettingsRequest? LastUpdateRequest { get; private set; }
-
-        public Task<RelaySettingsResponse> GetAsync(CancellationToken cancellationToken = default) =>
-            throw new InvalidOperationException("simulated backend outage");
-
-        public Task<RelaySettingsResponse> UpdateAsync(UpdateRelaySettingsRequest request, CancellationToken cancellationToken = default)
-        {
-            LastUpdateRequest = request;
-            return Task.FromResult(new RelaySettingsResponse("automatic", [], false));
-        }
+        try { Directory.Delete(dir, recursive: true); } catch { }
     }
 }

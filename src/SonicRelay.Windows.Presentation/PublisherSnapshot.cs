@@ -6,8 +6,6 @@ namespace SonicRelay.Windows.Presentation;
 public sealed record PublisherSnapshot
 {
     public bool IsAuthenticated { get; init; }
-    public string? UserDisplayName { get; init; }
-    public string? UserEmail { get; init; }
     public Guid? DeviceId { get; init; }
     public string? DeviceName { get; init; }
     public Guid? SessionId { get; init; }

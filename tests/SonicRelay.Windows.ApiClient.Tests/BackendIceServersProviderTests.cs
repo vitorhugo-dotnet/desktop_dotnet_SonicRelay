@@ -1,12 +1,15 @@
 using SonicRelay.Windows.ApiClient.Errors;
 using SonicRelay.Windows.ApiClient.WebRtc;
 using SonicRelay.Windows.Core.Authentication;
+using SonicRelay.Windows.Core.Configuration;
 using SonicRelay.Windows.WebRtc;
 
 namespace SonicRelay.Windows.ApiClient.Tests;
 
 public sealed class BackendIceServersProviderTests
 {
+    private static readonly Func<RelayPreferenceSnapshot> NoPreference = () => new RelayPreferenceSnapshot(RelayModes.Automatic, null);
+
     [Fact]
     public async Task EachBackendTurnRequestResolvesACurrentDeviceBearer()
     {
@@ -22,6 +25,7 @@ public sealed class BackendIceServersProviderTests
         });
         var provider = new BackendIceServersProvider(
             new WebRtcApiClient(TestClient.Create(handler), tokens),
+            NoPreference,
             time);
 
         await provider.GetIceServersAsync();
@@ -49,7 +53,7 @@ public sealed class BackendIceServersProviderTests
             ],
             "all",
             DateTimeOffset.UnixEpoch.AddSeconds(3600)));
-        var provider = new BackendIceServersProvider(api);
+        var provider = new BackendIceServersProvider(api, NoPreference);
 
         var servers = await provider.GetIceServersAsync();
 
@@ -69,7 +73,7 @@ public sealed class BackendIceServersProviderTests
     public async Task An_empty_backend_response_is_returned_as_is_not_replaced_with_stun_fallback()
     {
         var api = new StubWebRtcApiClient(new IceServersResponse([], "all", DateTimeOffset.UnixEpoch.AddSeconds(3600)));
-        var provider = new BackendIceServersProvider(api, allowGoogleStunDevFallback: true);
+        var provider = new BackendIceServersProvider(api, NoPreference, allowGoogleStunDevFallback: true);
 
         var servers = await provider.GetIceServersAsync();
 
@@ -82,7 +86,7 @@ public sealed class BackendIceServersProviderTests
         var time = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
         var api = new StubWebRtcApiClient(new IceServersResponse(
             [new IceServerResponse(["turn:relay:3478"], "u", "c")], "all", DateTimeOffset.UnixEpoch.AddSeconds(3600)));
-        var provider = new BackendIceServersProvider(api, time);
+        var provider = new BackendIceServersProvider(api, NoPreference, time);
 
         await provider.GetIceServersAsync();
         time.Advance(TimeSpan.FromSeconds(3600 - 60 - 1));
@@ -98,7 +102,7 @@ public sealed class BackendIceServersProviderTests
     public async Task In_dev_mode_falls_back_to_stun_when_backend_fails_with_no_cache()
     {
         var api = new StubWebRtcApiClient(new ApiClientException(ApiErrorKind.BackendUnavailable, "down"));
-        var provider = new BackendIceServersProvider(api, allowGoogleStunDevFallback: true);
+        var provider = new BackendIceServersProvider(api, NoPreference, allowGoogleStunDevFallback: true);
 
         var servers = await provider.GetIceServersAsync();
 
@@ -110,7 +114,7 @@ public sealed class BackendIceServersProviderTests
     public async Task In_production_mode_does_not_fall_back_to_stun_when_backend_fails_with_no_cache()
     {
         var api = new StubWebRtcApiClient(new ApiClientException(ApiErrorKind.BackendUnavailable, "down"));
-        var provider = new BackendIceServersProvider(api, allowGoogleStunDevFallback: false);
+        var provider = new BackendIceServersProvider(api, NoPreference, allowGoogleStunDevFallback: false);
 
         var servers = await provider.GetIceServersAsync();
 
@@ -123,7 +127,7 @@ public sealed class BackendIceServersProviderTests
         var time = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
         var api = new StubWebRtcApiClient(new IceServersResponse(
             [new IceServerResponse(["turn:relay:3478"], "u", "c")], "all", DateTimeOffset.UnixEpoch.AddSeconds(3600)));
-        var provider = new BackendIceServersProvider(api, time);
+        var provider = new BackendIceServersProvider(api, NoPreference, time);
         await provider.GetIceServersAsync();
 
         api.Fail(new ApiClientException(ApiErrorKind.NetworkUnavailable, "offline"));
@@ -131,6 +135,64 @@ public sealed class BackendIceServersProviderTests
 
         var servers = await provider.GetIceServersAsync();
         Assert.Equal("turn:relay:3478", servers[0].Urls[0]);
+    }
+
+    [Fact]
+    public async Task A_coturn_override_replaces_the_turn_url_but_keeps_the_server_credentials()
+    {
+        var api = new FakeWebRtcApiClient
+        {
+            Response = new IceServersResponse(
+            [
+                new IceServerResponse(["stun:backend.example.com:3478"]),
+                new IceServerResponse(["turn:backend.example.com:3478?transport=udp"], "1700000000:device", "signed-credential")
+            ], "all", DateTimeOffset.UnixEpoch.AddSeconds(3600))
+        };
+        var provider = new BackendIceServersProvider(api,
+            () => new RelayPreferenceSnapshot(RelayModes.Automatic, "turn:my-relay.example.com:3478?transport=udp"));
+
+        var servers = await provider.GetIceServersAsync();
+
+        var turn = servers.Single(s => s.Urls[0].StartsWith("turn:", StringComparison.Ordinal));
+        Assert.Equal("turn:my-relay.example.com:3478?transport=udp", turn.Urls[0]);
+        Assert.Equal("1700000000:device", turn.Username);
+        Assert.Equal("signed-credential", turn.Credential);
+        Assert.Contains(servers, s => s.Urls[0].StartsWith("stun:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task No_override_passes_the_backend_list_through_untouched()
+    {
+        var api = new FakeWebRtcApiClient
+        {
+            Response = new IceServersResponse(
+                [new IceServerResponse(["turn:backend.example.com:3478?transport=udp"], "u", "c")], "all", DateTimeOffset.UnixEpoch.AddSeconds(3600))
+        };
+        var provider = new BackendIceServersProvider(api, NoPreference);
+
+        var servers = await provider.GetIceServersAsync();
+
+        Assert.Equal("turn:backend.example.com:3478?transport=udp", servers.Single().Urls[0]);
+    }
+
+    [Fact]
+    public async Task Disable_fallback_drops_the_turn_entries_client_side()
+    {
+        var api = new FakeWebRtcApiClient
+        {
+            Response = new IceServersResponse(
+            [
+                new IceServerResponse(["stun:backend.example.com:3478"]),
+                new IceServerResponse(["turn:backend.example.com:3478?transport=udp"], "u", "c")
+            ], "all", DateTimeOffset.UnixEpoch.AddSeconds(3600))
+        };
+        var provider = new BackendIceServersProvider(api,
+            () => new RelayPreferenceSnapshot(RelayModes.DisableFallback, null));
+
+        var servers = await provider.GetIceServersAsync();
+
+        Assert.DoesNotContain(servers, s => s.Urls[0].StartsWith("turn:", StringComparison.Ordinal));
+        Assert.Single(servers);
     }
 
     private sealed class StubWebRtcApiClient : IWebRtcApiClient

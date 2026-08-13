@@ -29,6 +29,6 @@ public static class ShellCommandAvailability
     public static bool Retry(PublisherSnapshot? snapshot, PublisherUiCapabilities capabilities, bool hasWorkflow) =>
         hasWorkflow && snapshot?.IsBusy != true && capabilities.CanRetry;
 
-    public static bool Logout(PublisherSnapshot? snapshot, PublisherUiCapabilities capabilities, bool hasWorkflow) =>
+    public static bool Unpair(PublisherSnapshot? snapshot, PublisherUiCapabilities capabilities, bool hasWorkflow) =>
         hasWorkflow && snapshot?.IsBusy != true && capabilities.CanLogout;
 }

@@ -33,26 +33,30 @@
           </StackPanel>
           <controls:AccountStatusHeader Grid.Column="1"
                                         DataContext="{Binding Shell}" />
-          <!-- Forgets this device's identity and returns to the pairing surface (issue #26
-               follow-up) — the recovery path for a stale/rejected device credential that
-               would otherwise never show a pairing code again without an app restart. -->
+          <!-- Revokes this device's pairings, then forgets its identity and returns to the
+               pairing surface (issue #26 follow-up) — the recovery path for a stale/rejected
+               device credential that would otherwise never show a pairing code again without
+               an app restart, and that used to leave every paired phone's pairing silently
+               dead by re-bootstrapping a new DeviceId. Two-click confirm: first click arms
+               (UnpairButtonLabel switches to the confirm wording), second click acts. -->
           <Button Grid.Column="2" Margin="16,0,0,0" Classes="ghost"
-                  Content="Sign out" Command="{Binding LogoutCommand}" />
+                  Content="{Binding UnpairButtonLabel}" Command="{Binding UnpairCommand}" />
         </Grid>
       </Border>
 
       <!-- Page content, swapped by the sidebar selection -->
       <Panel>
-        <!-- Pairing (issue #26 follow-up: a normal, always-reachable page instead of a
-             full-shell gate — the old gate hid Settings too, so a bad backend URL left no
-             way back in, and hid the pairing surface at exactly the moment bootstrap gave it
-             real content to show). Renders its own "device identity unavailable" placeholder
-             when Pairing is null. DataContext is the Pairing view model, so — same as
-             Session/Diagnostics/Audio/Settings below — IsVisible must read IsPairing back off
-             the root DataContext via ElementName rather than an implicit binding: with
-             compiled bindings, an implicit `{Binding IsPairing}` on this same element resolves
-             against this element's own (just-overridden) DataContext type, PairingViewModel,
-             which has no IsPairing member, and fails to build (AVLN2000). -->
+        <!-- Pairing (issue #26 follow-up, refined by Task 3's device-identity gate: Pairing and
+             Settings stay reachable while every other destination is locked until this device
+             bootstraps an identity — fixing the old full-shell gate, which hid Settings too, so
+             a bad backend URL left no way back in, and hid the pairing surface at exactly the
+             moment bootstrap gave it real content to show). Renders its own "device identity
+             unavailable" placeholder when Pairing is null. DataContext is the Pairing view
+             model, so — same as Session/Diagnostics/Audio/Settings below — IsVisible must read
+             IsPairing back off the root DataContext via ElementName rather than an implicit
+             binding: with compiled bindings, an implicit `{Binding IsPairing}` on this same
+             element resolves against this element's own (just-overridden) DataContext type,
+             PairingViewModel, which has no IsPairing member, and fails to build (AVLN2000). -->
         <controls:PairingView DataContext="{Binding Pairing}"
                               IsVisible="{Binding ((vm:MainWindowViewModel)DataContext).IsPairing, ElementName=RootWindow}" />
 
