@@ -241,10 +241,14 @@ public partial class PairingView : UserControl
     private Control BuildPairingRow(PairingResponse pairing)
     {
         var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+        // Prefer the device's human name ("Vitor's phone"); the GUID is only a fallback for
+        // backends that predate device names in the pairing payload.
         var identity = new TextBlock
         {
             Classes = { "metric-label" },
-            Text = $"Viewer {pairing.ViewerDeviceId:D}",
+            Text = string.IsNullOrWhiteSpace(pairing.ViewerDeviceName)
+                ? $"Viewer {pairing.ViewerDeviceId:D}"
+                : pairing.ViewerDeviceName,
             TextWrapping = Avalonia.Media.TextWrapping.Wrap,
             VerticalAlignment = VerticalAlignment.Center,
         };

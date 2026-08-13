@@ -1,7 +1,7 @@
 namespace SonicRelay.Windows.Desktop.ViewModels;
 
 /// <summary>The shell's navigable destinations (issue #32).</summary>
-public enum PageKey { Dashboard, Pairing, Audio, Session, Diagnostics, Settings }
+public enum PageKey { Dashboard, Pairing, Audio, Diagnostics, Settings }
 
 /// <summary>
 /// A sidebar navigation entry. Pairing and Settings are always enabled; the remaining

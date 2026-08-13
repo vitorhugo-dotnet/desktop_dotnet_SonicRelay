@@ -1,3 +1,4 @@
+using SonicRelay.Windows.ApiClient.Settings;
 using SonicRelay.Windows.Core.Audio;
 using SonicRelay.Windows.Core.Configuration;
 
@@ -14,6 +15,8 @@ public sealed class SettingsViewModel : ViewModelBase
     private readonly RelayPreferenceStore? relay;
     private readonly AudioQualityStore? quality;
     private readonly Func<string, Task<string?>>? changeBackendUrl;
+    private readonly IRelaySettingsApiClient? relaySync;
+    private bool refreshedFromServer;
     private AudioQualityProfile selectedProfile = AudioQualityProfile.Default;
     private string backendUrlInput = "";
     private string? backendUrlError;
@@ -34,11 +37,13 @@ public sealed class SettingsViewModel : ViewModelBase
     /// <see cref="RelayPreferenceStore.CoturnUrlOverride"/> — the user's own prior override, if
     /// any — never a value fetched from a backend.
     /// </summary>
-    public SettingsViewModel(string backendUrl, RelayPreferenceStore relay, AudioQualityStore quality)
+    public SettingsViewModel(string backendUrl, RelayPreferenceStore relay, AudioQualityStore quality,
+        IRelaySettingsApiClient? relaySync = null)
     {
         ArgumentNullException.ThrowIfNull(relay);
         ArgumentNullException.ThrowIfNull(quality);
         this.relay = relay;
+        this.relaySync = relaySync;
         this.quality = quality;
         IsConnected = true;
         BackendUrl = string.IsNullOrWhiteSpace(backendUrl) ? "—" : backendUrl;
@@ -63,8 +68,9 @@ public sealed class SettingsViewModel : ViewModelBase
         string backendUrl,
         RelayPreferenceStore relay,
         AudioQualityStore quality,
-        Func<string, Task<string?>> changeBackendUrl)
-        : this(backendUrl, relay, quality)
+        Func<string, Task<string?>> changeBackendUrl,
+        IRelaySettingsApiClient? relaySync = null)
+        : this(backendUrl, relay, quality, relaySync)
     {
         this.changeBackendUrl = changeBackendUrl ?? throw new ArgumentNullException(nameof(changeBackendUrl));
         backendUrlInput = BackendUrl == "—" ? "" : BackendUrl;
@@ -153,6 +159,56 @@ public sealed class SettingsViewModel : ViewModelBase
     {
         HasDeviceIdentity = value;
         SaveTurnUriCommand.RaiseCanExecuteChanged();
+        if (value && !refreshedFromServer)
+        {
+            refreshedFromServer = true;
+            _ = RefreshFromServerAsync();
+        }
+    }
+
+    /// <summary>
+    /// Pulls the effective relay preferences from the backend (which resolves them across this
+    /// device's active pairings, latest write wins) and applies them locally — this is how a
+    /// coturn override saved on the paired phone shows up here. Best-effort: an unreachable or
+    /// older backend just leaves the local values in place.
+    /// </summary>
+    public async Task RefreshFromServerAsync()
+    {
+        if (relaySync is null || relay is null) return;
+        try
+        {
+            var settings = await relaySync.GetRelaySettingsAsync();
+            RelayMode = ResolveMode(settings.RelayMode);
+            TurnUriInput = settings.TurnUris.FirstOrDefault() ?? "";
+            await relay.SetRelayModeAsync(RelayMode);
+            await relay.SetCoturnUrlOverrideAsync(TurnUriInput);
+        }
+        catch (Exception)
+        {
+            // Sync is strictly best-effort; local preferences keep working offline.
+        }
+    }
+
+    private string ResolveMode(string mode) =>
+        RelayModeOptions.FirstOrDefault(option => string.Equals(option, mode, StringComparison.OrdinalIgnoreCase))
+        ?? RelayModes.Automatic;
+
+    /// <summary>
+    /// Pushes a preference change to the backend so it reaches this device's paired peers.
+    /// Best-effort like <see cref="Persist"/>: saving must keep working against an unreachable
+    /// or older backend, where the local store alone still applies to the next stream.
+    /// </summary>
+    private async void SyncToServer(UpdateRelaySettingsRequest request)
+    {
+        if (relaySync is null || !HasDeviceIdentity) return;
+        try
+        {
+            await relaySync.UpdateRelaySettingsAsync(request);
+        }
+        catch (Exception)
+        {
+            // Async void must never throw; the local save already succeeded.
+        }
     }
 
     /// <summary>No-op until the connected overload replaces it; mirrors <see cref="SaveBackendUrlCommand"/>.</summary>
@@ -170,6 +226,7 @@ public sealed class SettingsViewModel : ViewModelBase
     public Task SaveRelayModeAsync()
     {
         if (relay is not null) Persist(relay.SetRelayModeAsync(relayMode));
+        SyncToServer(new UpdateRelaySettingsRequest(RelayMode: relayMode));
         return Task.CompletedTask;
     }
 
@@ -179,6 +236,8 @@ public sealed class SettingsViewModel : ViewModelBase
     public Task SaveTurnUriAsync()
     {
         if (relay is not null) Persist(relay.SetCoturnUrlOverrideAsync(turnUriInput));
+        SyncToServer(new UpdateRelaySettingsRequest(
+            TurnUris: string.IsNullOrWhiteSpace(turnUriInput) ? [] : [turnUriInput.Trim()]));
         return Task.CompletedTask;
     }
 

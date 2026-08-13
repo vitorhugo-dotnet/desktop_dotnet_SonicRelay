@@ -35,6 +35,8 @@ public sealed class PublisherWorkflow : IAsyncDisposable
         this.audio = audio ?? throw new ArgumentNullException(nameof(audio));
         this.pairings = pairings ?? throw new ArgumentNullException(nameof(pairings));
         signaling.StateChanged += OnSignalingStateChanged;
+        signaling.Closed += OnSignalingClosed;
+        signaling.ReconnectAttempting += OnSignalingReconnectAttempting;
         audio.StateChanged += OnAudioStateChanged;
         audio.LevelChanged += OnAudioLevelChanged;
         State = new PublisherSnapshot { AudioDiagnostics = audio.Diagnostics };
@@ -123,7 +125,17 @@ public sealed class PublisherWorkflow : IAsyncDisposable
             var sessionId = State.SessionId.Value;
             if (audio.State is not AudioCaptureState.Stopped) await audio.StopAsync(token);
             await signaling.CloseAsync(token);
-            await sessions.EndSessionAsync(sessionId, token);
+            try
+            {
+                await sessions.EndSessionAsync(sessionId, token);
+            }
+            catch (ApiClientException exception)
+            {
+                // The backend may have discarded the session already (e.g. it expired). Ending
+                // must always release the local session, otherwise the only way to create a new
+                // one is restarting the app.
+                AddLog($"The backend could not end the session ({exception.Message}); releasing it locally.");
+            }
             SetState(state => state with { SessionId = null, SessionCode = null, ViewerCount = 0 }, "Session ended.");
         }, cancellationToken);
     }
@@ -200,7 +212,10 @@ public sealed class PublisherWorkflow : IAsyncDisposable
         if (State.SessionId is not { } id) return;
         var active = await sessions.GetActiveSessionsAsync(cancellationToken);
         var current = active.FirstOrDefault(item => item.Id == id);
-        SetState(state => state with { ViewerCount = current?.ViewerCount ?? 0 });
+        var viewerCount = current?.ViewerCount ?? 0;
+        var changed = viewerCount != State.ViewerCount;
+        SetState(state => state with { ViewerCount = viewerCount },
+            changed ? $"Viewers connected: {viewerCount}." : null);
     }
 
     /// <summary>
@@ -227,7 +242,20 @@ public sealed class PublisherWorkflow : IAsyncDisposable
         catch (Exception exception)
         {
             var message = ToFriendlyMessage(exception);
-            if (exception is ApiClientException { Kind: ApiErrorKind.Unauthorized })
+            if (exception is SignalingSessionGoneException)
+            {
+                // The backend no longer knows this session, so holding on to its id would keep
+                // "Create session" disabled forever. Release it so the user can start over
+                // without restarting the app.
+                SetState(state => state with
+                {
+                    SessionId = null,
+                    SessionCode = null,
+                    ViewerCount = 0,
+                    ErrorMessage = message
+                }, $"Error: {message}");
+            }
+            else if (exception is ApiClientException { Kind: ApiErrorKind.Unauthorized })
             {
                 SetState(state => state with
                 {
@@ -257,6 +285,8 @@ public sealed class PublisherWorkflow : IAsyncDisposable
 
     private static string ToFriendlyMessage(Exception exception) => exception switch
     {
+        SignalingSessionGoneException =>
+            "The session no longer exists on the backend. It was released — create a new session to continue.",
         ApiClientException api => api.Kind switch
         {
             ApiErrorKind.Unauthorized => "The publisher device is no longer authorized. Restart to bootstrap it again.",
@@ -269,8 +299,38 @@ public sealed class PublisherWorkflow : IAsyncDisposable
     };
 
     private void OnSignalingStateChanged(SignalingConnectionState state) => SetState(current => current with { SignalingState = state }, $"Signaling: {state}.");
-    private void OnAudioStateChanged(AudioCaptureState state) => SetState(current => current with { AudioState = state, AudioDiagnostics = audio.Diagnostics });
+
+    /// <summary>
+    /// A session the backend reports gone (or ended) is released immediately so the UI leaves
+    /// the faulted state and "Create session" becomes available again without a restart.
+    /// </summary>
+    private void OnSignalingClosed(SignalingCloseReason reason)
+    {
+        switch (reason)
+        {
+            case SignalingCloseReason.SessionGone:
+                SetState(state => state with { SessionId = null, SessionCode = null, ViewerCount = 0 },
+                    "The session no longer exists on the backend. Create a new session to continue.");
+                break;
+            case SignalingCloseReason.SessionEnded:
+                SetState(state => state with { SessionId = null, SessionCode = null, ViewerCount = 0 },
+                    "The session was ended by the backend.");
+                break;
+            case SignalingCloseReason.ReconnectExhausted:
+                AddLog("Signaling gave up reconnecting. Use Retry to reconnect.");
+                break;
+        }
+    }
+
+    private void OnSignalingReconnectAttempting(int attempt) =>
+        AddLog($"Signaling: reconnect attempt {attempt}.");
+    private void OnAudioStateChanged(AudioCaptureState state) => SetState(
+        current => current with { AudioState = state, AudioDiagnostics = audio.Diagnostics },
+        $"Audio capture: {state}.");
     private void OnAudioLevelChanged(AudioLevelSnapshot _) => SetState(current => current with { AudioDiagnostics = audio.Diagnostics });
+
+    /// <summary>Appends a line to the technical console's event log without changing state.</summary>
+    public void LogActivity(string message) => AddLog(message);
 
     private void AddLog(string message) => SetState(state => state, message);
 
@@ -304,6 +364,8 @@ public sealed class PublisherWorkflow : IAsyncDisposable
         if (disposed) return;
         disposed = true;
         signaling.StateChanged -= OnSignalingStateChanged;
+        signaling.Closed -= OnSignalingClosed;
+        signaling.ReconnectAttempting -= OnSignalingReconnectAttempting;
         audio.StateChanged -= OnAudioStateChanged;
         audio.LevelChanged -= OnAudioLevelChanged;
         if (audio.State is not AudioCaptureState.Stopped)

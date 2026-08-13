@@ -71,9 +71,10 @@ attaches. The Linux capture adapter (PipeWire) is a later phase.
 
 ## Navigation and pages
 
-The sidebar switches the main content between **Dashboard**, **Audio**, **Session**,
-**Diagnostics** and **Settings**; `MainWindowViewModel.SelectedNavigation` (bound two-way to the
-rail) drives `CurrentPage` and the top-bar title.
+The sidebar switches the main content between **Dashboard**, **Audio**, **Diagnostics** and
+**Settings**; `MainWindowViewModel.SelectedNavigation` (bound two-way to the rail) drives
+`CurrentPage` and the top-bar title. (A separate Session page existed briefly but only
+duplicated the dashboard cards and top-bar status rows, so it was removed.)
 
 - **Audio** (`AudioPageViewModel`) picks the system output endpoint to capture, surfacing the
   platform `IAudioDeviceEnumerator` and persisting the choice to `AudioOutputPreferenceStore`.
