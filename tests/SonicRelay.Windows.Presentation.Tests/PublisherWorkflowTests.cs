@@ -1,3 +1,4 @@
+using System.Net;
 using SonicRelay.Windows.ApiClient.Errors;
 using SonicRelay.Windows.ApiClient.Pairing;
 using SonicRelay.Windows.ApiClient.Sessions;
@@ -239,6 +240,60 @@ public sealed class PublisherWorkflowTests
         Assert.Equal(fixture.Sessions.Created.Id.ToString("D"), fixture.Signaling.SessionId);
     }
 
+    [Fact]
+    public async Task SessionGoneOnRetryReleasesTheSessionSoANewOneCanBeCreated()
+    {
+        await using var fixture = new DeviceIdentityFixture();
+        await fixture.Workflow.InitializeDeviceIdentityAsync();
+        await fixture.Workflow.CreateSessionAsync();
+        Assert.NotNull(fixture.Workflow.State.SessionId);
+
+        // The backend discarded the session; the Retry reconnect hits 410 Gone.
+        fixture.Signaling.ConnectException = new SignalingSessionGoneException(HttpStatusCode.Gone);
+        await fixture.Workflow.ReconnectSignalingAsync();
+
+        Assert.Null(fixture.Workflow.State.SessionId);
+        Assert.Null(fixture.Workflow.State.SessionCode);
+        Assert.Equal(
+            "The session no longer exists on the backend. It was released — create a new session to continue.",
+            fixture.Workflow.State.ErrorMessage);
+        Assert.True(fixture.Workflow.State.CanCreateSession);
+
+        // …and creating a fresh session immediately afterwards works without a restart.
+        fixture.Signaling.ConnectException = null;
+        await fixture.Workflow.CreateSessionAsync();
+        Assert.NotNull(fixture.Workflow.State.SessionId);
+        Assert.Null(fixture.Workflow.State.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task SessionGoneReportedBySignalingReleasesTheSession()
+    {
+        await using var fixture = new DeviceIdentityFixture();
+        await fixture.Workflow.InitializeDeviceIdentityAsync();
+        await fixture.Workflow.CreateSessionAsync();
+
+        // Mid-stream, the signaling client's reconnect loop hit 410 and closed terminally.
+        fixture.Signaling.RaiseClosed(SignalingCloseReason.SessionGone);
+
+        Assert.Null(fixture.Workflow.State.SessionId);
+        Assert.True(fixture.Workflow.State.CanCreateSession);
+    }
+
+    [Fact]
+    public async Task EndSessionReleasesTheSessionEvenWhenTheBackendAlreadyDiscardedIt()
+    {
+        await using var fixture = new DeviceIdentityFixture();
+        await fixture.Workflow.InitializeDeviceIdentityAsync();
+        await fixture.Workflow.CreateSessionAsync();
+        fixture.Sessions.EndException = new ApiClientException(ApiErrorKind.Unknown, "Gone.");
+
+        await fixture.Workflow.EndSessionAsync();
+
+        Assert.Null(fixture.Workflow.State.SessionId);
+        Assert.True(fixture.Workflow.State.CanCreateSession);
+    }
+
     private static PublisherWorkflow CreateWorkflow(IPairingApiClient pairings)
     {
         var credential = new DeviceCredential(
@@ -324,6 +379,7 @@ public sealed class PublisherWorkflowTests
         public StreamSessionResponse Created { get; } = new(Guid.NewGuid(), Guid.NewGuid(), "active", 4, DateTimeOffset.UtcNow.AddMinutes(5), DateTimeOffset.UtcNow, null, DateTimeOffset.UtcNow, "ABC123");
         public Guid? EndedId { get; private set; }
         public Exception? CreateException { get; set; }
+        public Exception? EndException { get; set; }
         public CreateSessionRequest LastCreateRequest { get; private set; } = new();
         public Task<StreamSessionResponse> CreateSessionAsync(CreateSessionRequest request, CancellationToken cancellationToken = default)
         {
@@ -335,6 +391,7 @@ public sealed class PublisherWorkflowTests
         public Task<IReadOnlyList<ActiveSessionResponse>> GetActiveSessionsAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<ActiveSessionResponse>>([]);
         public Task<StreamSessionResponse> EndSessionAsync(Guid sessionId, CancellationToken cancellationToken = default)
         {
+            if (EndException is not null) return Task.FromException<StreamSessionResponse>(EndException);
             EndedId = sessionId;
             return Task.FromResult(Created with { Id = sessionId, Status = "ended", EndedAt = DateTimeOffset.UtcNow });
         }
@@ -345,11 +402,20 @@ public sealed class PublisherWorkflowTests
         public SignalingConnectionState State { get; private set; } = SignalingConnectionState.Disconnected;
         public string? SessionId { get; private set; }
         public bool CloseCalled { get; private set; }
+        public Exception? ConnectException { get; set; }
         public event Action<SignalingConnectionState>? StateChanged;
         public event Action<int>? ReconnectAttempting;
         public event Action<SignalingCloseReason>? Closed;
+        public void RaiseClosed(SignalingCloseReason reason) => Closed?.Invoke(reason);
+        public void RaiseReconnectAttempting(int attempt) => ReconnectAttempting?.Invoke(attempt);
         public Task ConnectAsync(string sessionId, CancellationToken cancellationToken = default)
         {
+            if (ConnectException is not null)
+            {
+                State = SignalingConnectionState.Faulted;
+                StateChanged?.Invoke(State);
+                return Task.FromException(ConnectException);
+            }
             SessionId = sessionId;
             State = SignalingConnectionState.Connected;
             StateChanged?.Invoke(State);

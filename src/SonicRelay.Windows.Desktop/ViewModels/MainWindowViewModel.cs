@@ -35,7 +35,6 @@ public sealed class MainWindowViewModel : ViewModelBase
             new NavigationItem(PageKey.Dashboard, "◧", "Dashboard"),
             new NavigationItem(PageKey.Pairing, "⇄", "Pairing"),
             new NavigationItem(PageKey.Audio, "♪", "Audio"),
-            new NavigationItem(PageKey.Session, "⧉", "Session"),
             new NavigationItem(PageKey.Diagnostics, "⚙", "Diagnostics"),
             new NavigationItem(PageKey.Settings, "⚑", "Settings"),
         ];
@@ -150,7 +149,6 @@ public sealed class MainWindowViewModel : ViewModelBase
         RaisePropertyChanged(nameof(CurrentPage));
         RaisePropertyChanged(nameof(IsDashboard));
         RaisePropertyChanged(nameof(IsPairing));
-        RaisePropertyChanged(nameof(IsSession));
         RaisePropertyChanged(nameof(IsDiagnostics));
         RaisePropertyChanged(nameof(IsAudio));
         RaisePropertyChanged(nameof(IsSettings));
@@ -162,7 +160,6 @@ public sealed class MainWindowViewModel : ViewModelBase
     public PageKey CurrentPage => selectedNavigation.Key;
     public bool IsDashboard => CurrentPage == PageKey.Dashboard;
     public bool IsPairing => CurrentPage == PageKey.Pairing;
-    public bool IsSession => CurrentPage == PageKey.Session;
     public bool IsDiagnostics => CurrentPage == PageKey.Diagnostics;
     public bool IsAudio => CurrentPage == PageKey.Audio;
     public bool IsSettings => CurrentPage == PageKey.Settings;
@@ -171,7 +168,6 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         PageKey.Pairing => "Pairing",
         PageKey.Audio => "Audio",
-        PageKey.Session => "Session",
         PageKey.Diagnostics => "Diagnostics",
         PageKey.Settings => "Settings",
         _ => "Dashboard",
@@ -181,7 +177,6 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         PageKey.Pairing => "Pair this device with the SonicRelay app",
         PageKey.Audio => "Choose the system output to capture",
-        PageKey.Session => "Broadcast session details and controls",
         PageKey.Diagnostics => "Publisher event log",
         PageKey.Settings => "Backend, relay and audio quality",
         _ => "Live status of the publisher transmission",
@@ -263,7 +258,8 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         Settings = next is null
             ? new SettingsViewModel()
-            : new SettingsViewModel(next.BackendBaseUrl.ToString(), next.RelayPreference, next.AudioQuality, ChangeBackendUrlAsync);
+            : new SettingsViewModel(next.BackendBaseUrl.ToString(), next.RelayPreference, next.AudioQuality,
+                ChangeBackendUrlAsync, next.RelaySettingsApi);
         Audio = next is null
             ? new AudioPageViewModel()
             : new AudioPageViewModel(next.AudioCapture, next.AudioOutput);

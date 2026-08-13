@@ -24,4 +24,8 @@ public sealed record PairingResponse(
     Guid ViewerDeviceId,
     string Status,
     DateTimeOffset CreatedAt,
-    DateTimeOffset? LastUsedAt);
+    DateTimeOffset? LastUsedAt,
+    // Human device names resolved by the backend; may be null against an older
+    // backend that predates them, so display code must fall back to the id.
+    string? PublisherDeviceName = null,
+    string? ViewerDeviceName = null);

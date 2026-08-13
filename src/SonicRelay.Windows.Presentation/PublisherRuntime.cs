@@ -1,6 +1,7 @@
 using SonicRelay.Windows.ApiClient.DeviceIdentity;
 using SonicRelay.Windows.ApiClient.Pairing;
 using SonicRelay.Windows.ApiClient.Sessions;
+using SonicRelay.Windows.ApiClient.Settings;
 using SonicRelay.Windows.ApiClient.WebRtc;
 using SonicRelay.Windows.Audio;
 using SonicRelay.Windows.Core.Audio;
@@ -76,6 +77,12 @@ public sealed class PublisherRuntime : IAsyncDisposable
     public DiagnosticReportExporter ReportExporter { get; }
     public IWebRtcPublisher WebRtcPublisher => webRtcPublisher;
     public PairingViewModel? Pairing { get; private set; }
+
+    private IRelaySettingsApiClient? relaySettingsApi;
+
+    /// <summary>Backend relay-preference sync (shared across this device's pairings).</summary>
+    public IRelaySettingsApiClient RelaySettingsApi =>
+        relaySettingsApi ??= new RelaySettingsApiClient(httpClient, deviceIdentitySession);
 
     /// <summary>
     /// Composes the shared publisher runtime for one backend. The platform shell
@@ -160,6 +167,11 @@ public sealed class PublisherRuntime : IAsyncDisposable
             signaling,
             audio,
             new PairingApiClient(http, deviceIdentitySession));
+        // Surface WebRTC recovery events in the technical console too — the on-disk
+        // diagnostic log is invisible in the UI and these are exactly the lines a user
+        // debugging a dropped viewer needs to see.
+        webRtcPublisher.IceRestartRequested += _ =>
+            workflow.LogActivity("WebRTC: ICE restart requested for a reconnected viewer.");
         return new PublisherRuntime(
             http,
             workflow,

@@ -111,7 +111,7 @@ public sealed class MainWindowViewModelStateTests
             deviceIdentityApiClientOverride: deviceIdentityApi);
         var vm = new MainWindowViewModel();
         vm.Attach(runtime);
-        vm.SelectedNavigation = vm.Navigation.Single(item => item.Key == PageKey.Session);
+        vm.SelectedNavigation = vm.Navigation.Single(item => item.Key == PageKey.Audio);
 
         await vm.UnpairAsync();
         await vm.UnpairAsync();
@@ -168,7 +168,6 @@ public sealed class MainWindowViewModelStateTests
         Assert.Equal(PageKey.Pairing, vm.CurrentPage);
         Assert.True(vm.IsPairing);
         Assert.False(vm.IsDashboard);
-        Assert.False(vm.IsSession);
         Assert.False(vm.IsDiagnostics);
     }
 

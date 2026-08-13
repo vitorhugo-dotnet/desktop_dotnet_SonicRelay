@@ -47,24 +47,33 @@ public sealed class ShellRenderTests
     }
 
     [AvaloniaFact]
-    public void Session_page_renders_when_selected()
+    public void Diagnostics_page_renders_when_selected()
     {
         var viewModel = MainWindowViewModel.CreatePreview();
-        viewModel.SelectedNavigation = viewModel.Navigation.Single(item => item.Key == PageKey.Session);
+        viewModel.SelectedNavigation = viewModel.Navigation.Single(item => item.Key == PageKey.Diagnostics);
         var window = new MainWindow { DataContext = viewModel };
 
         window.Show();
 
         var frame = window.CaptureRenderedFrame();
         Assert.NotNull(frame);
-        Assert.True(viewModel.IsSession);
+        Assert.True(viewModel.IsDiagnostics);
 
         var dir = Environment.GetEnvironmentVariable("SHELL_SHOT_DIR");
         if (!string.IsNullOrWhiteSpace(dir))
         {
             Directory.CreateDirectory(dir);
-            frame!.Save(Path.Combine(dir, "session-preview.png"));
+            frame!.Save(Path.Combine(dir, "diagnostics-preview.png"));
         }
+    }
+
+    [AvaloniaFact]
+    public void The_session_page_is_gone_from_navigation()
+    {
+        // The Session page duplicated the dashboard's cards and top-bar status rows, so it was
+        // removed; the sidebar must not offer it any more.
+        var viewModel = MainWindowViewModel.CreatePreview();
+        Assert.DoesNotContain(viewModel.Navigation, item => item.Label == "Session");
     }
 
     [AvaloniaFact]
@@ -147,24 +156,25 @@ public sealed class ShellRenderTests
     }
 
     [AvaloniaFact]
-    public void Technical_console_is_height_bounded_so_it_cannot_cover_the_dashboard_cards()
+    public void Dashboard_console_scrolls_with_the_cards_and_keeps_its_height_cap()
     {
-        var console = new SonicRelay.Windows.Desktop.Controls.TechnicalConsole
-        {
-            DataContext = new DashboardShellViewModel()
-        };
-
-        // Compiled-binding content only materializes past the UserControl's ContentPresenter
-        // once the control is attached to a shown visual tree, so this uses the same
-        // window.Show() headless-render setup the rest of this file relies on.
-        var window = new Window { Content = console };
+        // The console lives inside the dashboard's ScrollViewer (it used to be docked to the
+        // window bottom, where it painted over the Signal Infrastructure card at narrow sizes)
+        // and the dashboard instance still caps its height. Diagnostics deliberately does not:
+        // its console fills the page.
+        var viewModel = MainWindowViewModel.CreatePreview();
+        var window = new MainWindow { DataContext = viewModel };
         window.Show();
+        Assert.True(viewModel.IsDashboard);
 
-        var card = console.GetVisualDescendants().OfType<Border>()
-            .First(border => border.Classes.Contains("card"));
+        var console = window.GetVisualDescendants()
+            .OfType<SonicRelay.Windows.Desktop.Controls.TechnicalConsole>()
+            .First(candidate => candidate.IsEffectivelyVisible);
 
-        Assert.True(double.IsFinite(card.MaxHeight),
-            "The console must cap its height or the DockPanel lets it grow over the cards above.");
+        Assert.True(double.IsFinite(console.MaxHeight),
+            "The dashboard console must cap its height so it cannot dominate the page.");
+        Assert.True(console.GetVisualAncestors().OfType<ScrollViewer>().Any(),
+            "The dashboard console must scroll with the cards instead of overlaying them.");
     }
 
     [AvaloniaFact]

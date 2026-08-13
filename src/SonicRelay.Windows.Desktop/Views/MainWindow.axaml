@@ -24,12 +24,16 @@
               BorderBrush="{DynamicResource Sonic.CardBorderBrush}"
               BorderThickness="0,0,0,1"
               Padding="24,16">
-        <Grid ColumnDefinitions="*,Auto,Auto">
+        <!-- ColumnSpacing plus trimmed title/subtitle keep the star column from painting
+             under the status pill when the window gets narrow. -->
+        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="16">
           <StackPanel Spacing="2" VerticalAlignment="Center">
             <TextBlock Text="{Binding PageTitle}" FontSize="{StaticResource Sonic.FontSizeHeadline}"
                        FontWeight="SemiBold"
+                       TextTrimming="CharacterEllipsis"
                        Foreground="{DynamicResource Sonic.TextPrimaryBrush}" />
-            <TextBlock Text="{Binding PageSubtitle}" Classes="metric-label" />
+            <TextBlock Text="{Binding PageSubtitle}" Classes="metric-label"
+                       TextTrimming="CharacterEllipsis" />
           </StackPanel>
           <controls:AccountStatusHeader Grid.Column="1"
                                         DataContext="{Binding Shell}" />
@@ -60,11 +64,9 @@
         <controls:PairingView DataContext="{Binding Pairing}"
                               IsVisible="{Binding ((vm:MainWindowViewModel)DataContext).IsPairing, ElementName=RootWindow}" />
 
-        <!-- Dashboard -->
+        <!-- Dashboard. The technical console scrolls with the cards (it used to be docked to
+             the bottom of the page, where it painted over the card grid at narrow sizes). -->
         <DockPanel IsVisible="{Binding IsDashboard}" LastChildFill="True">
-          <controls:TechnicalConsole DockPanel.Dock="Bottom"
-                                     Margin="24,0,24,20"
-                                     DataContext="{Binding Shell}" />
           <Border DockPanel.Dock="Top" Padding="24,16,24,0">
             <StackPanel Orientation="Horizontal" Spacing="10">
               <Button Content="Create session" Command="{Binding CreateSessionCommand}" />
@@ -75,6 +77,7 @@
             </StackPanel>
           </Border>
           <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
             <WrapPanel Orientation="Horizontal" Margin="16,16,16,0">
               <controls:SessionCodeCard Width="440" Margin="8" DataContext="{Binding Shell}" />
               <controls:AudioLevelMonitor Width="440" Margin="8"
@@ -109,12 +112,12 @@
               </Border>
               <controls:BandwidthGauge Width="360" Margin="8" DataContext="{Binding Shell}" />
             </WrapPanel>
+            <controls:TechnicalConsole MaxHeight="260"
+                                       Margin="24,8,24,20"
+                                       DataContext="{Binding Shell}" />
+            </StackPanel>
           </ScrollViewer>
         </DockPanel>
-
-        <!-- Session (DataContext is the shell VM, so IsSession is read from the root VM) -->
-        <controls:SessionView DataContext="{Binding Shell}"
-                              IsVisible="{Binding ((vm:MainWindowViewModel)DataContext).IsSession, ElementName=RootWindow}" />
 
         <!-- Diagnostics -->
         <controls:DiagnosticsView
