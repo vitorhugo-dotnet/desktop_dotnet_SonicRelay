@@ -6,14 +6,12 @@ namespace SonicRelay.Windows.WebRtc.Tests;
 public sealed class WebRtcPublisherTests
 {
     [Fact]
-    public async Task ViewerReadyRegistersPeerAndSendsOfferOnlyOnce()
+    public async Task ViewerReadyRegistersPeerAndSendsOffer()
     {
         var context = CreateContext();
         await using var publisher = context.Publisher;
 
-        var ready = new SignalingMessageEnvelope(SignalingMessageTypes.ViewerReady, "session-1", From: "viewer-1");
-        await publisher.HandleAsync(ready);
-        await publisher.HandleAsync(ready);
+        await ReadyAsync(publisher, "viewer-1");
 
         var peer = Assert.Single(context.Factory.Peers);
         Assert.Equal("viewer-1", peer.ViewerId);
@@ -24,6 +22,28 @@ public sealed class WebRtcPublisherTests
         Assert.Equal("viewer-1", offer.To);
         Assert.Equal("offer-viewer-1", offer.Payload!.Value.GetProperty("sdp").GetString());
         Assert.Equal(1, publisher.Diagnostics.ViewerConnectionCount);
+    }
+
+    // A viewer whose ICE died re-announces `viewer.ready` to ask for a fresh offer while
+    // its signaling socket is perfectly healthy. Returning silently because a peer already
+    // exists leaves that viewer waiting forever for an offer that never arrives.
+    [Fact]
+    public async Task ViewerReadyForAnAlreadyRegisteredViewerRestartsIceAndReoffers()
+    {
+        var context = CreateContext();
+        await using var publisher = context.Publisher;
+        await ReadyAsync(publisher, "viewer-1");
+
+        await ReadyAsync(publisher, "viewer-1");
+
+        var peer = Assert.Single(context.Factory.Peers); // recovered in place, not recreated
+        Assert.Equal(1, peer.OfferCount); // the original offer only
+        Assert.Equal(1, peer.IceRestartCount);
+        Assert.Equal(2, context.Signaling.Messages.Count);
+        var reoffer = context.Signaling.Messages[1];
+        Assert.Equal(SignalingMessageTypes.WebRtcOffer, reoffer.Type);
+        Assert.Equal("viewer-1", reoffer.To);
+        Assert.Equal("restart-viewer-1-1", reoffer.Payload!.Value.GetProperty("sdp").GetString());
     }
 
     [Fact]
@@ -170,6 +190,42 @@ public sealed class WebRtcPublisherTests
         Assert.Equal("viewer-2", offer.To);
     }
 
+    // A viewer whose socket dropped triggers two independent recovery requests that race:
+    // the backend announces `participant.reconnected` to the publisher, and the viewer
+    // itself re-announces `viewer.ready`. Restarting ICE twice back to back risks glare —
+    // the answer to the first offer arriving after the second was already created.
+    [Fact]
+    public async Task RacingRecoveryRequestsRestartIceOnlyOnce()
+    {
+        var context = CreateContext();
+        await using var publisher = context.Publisher;
+        await ReadyAsync(publisher, "viewer-1");
+        context.Signaling.Messages.Clear();
+
+        await publisher.HandleAsync(new(SignalingMessageTypes.ParticipantReconnected, "session-1", From: "viewer-1"));
+        await ReadyAsync(publisher, "viewer-1");
+
+        Assert.Equal(1, context.Factory.Peers[0].IceRestartCount);
+        Assert.Single(context.Signaling.Messages);
+    }
+
+    // The debounce collapses a burst, it does not spend the viewer's one recovery: a stream
+    // that loses ICE repeatedly over a long session must be recoverable every time.
+    [Fact]
+    public async Task ARecoveryRequestAfterTheDebounceWindowRestartsIceAgain()
+    {
+        var time = new MutableTimeProvider();
+        var context = CreateContext(time);
+        await using var publisher = context.Publisher;
+        await ReadyAsync(publisher, "viewer-1");
+        await ReadyAsync(publisher, "viewer-1");
+
+        time.Advance(TimeSpan.FromSeconds(5));
+        await ReadyAsync(publisher, "viewer-1");
+
+        Assert.Equal(2, context.Factory.Peers[0].IceRestartCount);
+    }
+
     [Fact]
     public async Task ParticipantReconnectedRestartsIceOnTheExistingPeerInsteadOfRecreatingIt()
     {
@@ -293,12 +349,22 @@ public sealed class WebRtcPublisherTests
     private static async Task ReadyAsync(WebRtcPublisher publisher, string viewerId) =>
         await publisher.HandleAsync(new(SignalingMessageTypes.ViewerReady, "session-1", From: viewerId));
 
-    private static TestContext CreateContext()
+    private static TestContext CreateContext(TimeProvider? timeProvider = null)
     {
         var signaling = new RecordingSignalingClient();
         var factory = new FakePeerConnectionFactory();
         var manager = new PeerConnectionManager(factory, new WebRtcPublisherOptions());
-        return new(signaling, factory, new WebRtcPublisher(signaling, manager));
+        return new(signaling, factory, new WebRtcPublisher(signaling, manager, timeProvider));
+    }
+
+    /// <summary>A clock that only moves when a test moves it.</summary>
+    private sealed class MutableTimeProvider : TimeProvider
+    {
+        private DateTimeOffset now = DateTimeOffset.UnixEpoch;
+
+        public override DateTimeOffset GetUtcNow() => now;
+
+        public void Advance(TimeSpan delta) => now += delta;
     }
 
     private sealed record TestContext(

@@ -6,16 +6,30 @@ namespace SonicRelay.Windows.WebRtc;
 public sealed class WebRtcPublisher : IWebRtcPublisher
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+    /// <summary>
+    /// How long after an ICE restart a further recovery request for the same viewer is
+    /// treated as a duplicate of it. A dropped viewer socket produces two independent
+    /// requests at once — the backend's `participant.reconnected` and the viewer's own
+    /// `viewer.ready` — and honouring both would create a second offer while the answer to
+    /// the first is still in flight. Genuine recovery requests are seconds to minutes apart,
+    /// so this window never suppresses one.
+    /// </summary>
+    private static readonly TimeSpan IceRestartDebounce = TimeSpan.FromSeconds(2);
+
     private readonly ISignalingClient signaling;
     private readonly IPeerConnectionManager peers;
+    private readonly TimeProvider timeProvider;
+    private readonly Dictionary<string, DateTimeOffset> lastIceRestartAt = [];
     private string? activeSessionId;
     private string? lastError;
     private bool disposed;
 
-    public WebRtcPublisher(ISignalingClient signaling, IPeerConnectionManager peers)
+    public WebRtcPublisher(ISignalingClient signaling, IPeerConnectionManager peers, TimeProvider? timeProvider = null)
     {
         this.signaling = signaling ?? throw new ArgumentNullException(nameof(signaling));
         this.peers = peers ?? throw new ArgumentNullException(nameof(peers));
+        this.timeProvider = timeProvider ?? TimeProvider.System;
         peers.LocalIceCandidateReady += SendLocalIceCandidateAsync;
         peers.DiagnosticsChanged += PublishDiagnostics;
     }
@@ -109,23 +123,36 @@ public sealed class WebRtcPublisher : IWebRtcPublisher
         }
         activeSessionId ??= sessionId;
         ValidateSession(message);
-        await OfferToViewerAsync(sessionId, message.From!, cancellationToken);
+        // A repeated `session.joined` for a viewer we already hold is backend noise about a
+        // presence we already acted on, not a request for anything, so it stays deduped.
+        await OfferToViewerAsync(sessionId, message.From!, recoverKnownViewer: false, cancellationToken);
     }
 
-    // Retained for viewers that still announce readiness explicitly; idempotent with
-    // the `session.joined`-driven offer above because RegisterViewerAsync dedupes.
+    // Unlike `session.joined`, `viewer.ready` is the viewer explicitly asking to be offered.
+    // A viewer that already has a peer only asks again when its own media path has died, so
+    // a repeat announcement is a recovery request rather than a duplicate.
     private async Task HandleViewerReadyAsync(SignalingMessageEnvelope message, CancellationToken cancellationToken)
     {
         var sessionId = RequireSessionId(message);
         activeSessionId ??= sessionId;
         ValidateSession(message);
-        await OfferToViewerAsync(sessionId, RequireViewerId(message), cancellationToken);
+        await OfferToViewerAsync(sessionId, RequireViewerId(message), recoverKnownViewer: true, cancellationToken);
     }
 
-    private async Task OfferToViewerAsync(string sessionId, string viewerId, CancellationToken cancellationToken)
+    private async Task OfferToViewerAsync(string sessionId, string viewerId, bool recoverKnownViewer,
+        CancellationToken cancellationToken)
     {
         var registration = await peers.RegisterViewerAsync(viewerId, cancellationToken);
-        if (!registration.WasCreated) return;
+        if (!registration.WasCreated)
+        {
+            // The viewer's ICE died while signaling stayed up (a network handover or NAT
+            // rebinding). Recover the existing peer with an ICE restart. Returning silently
+            // here — the previous behaviour for every caller — left such a viewer waiting
+            // forever for an offer that would never come, because no other path reaches it:
+            // `participant.reconnected` only fires when the *signaling socket* dropped.
+            if (recoverKnownViewer) await ReofferToViewerAsync(sessionId, viewerId, cancellationToken);
+            return;
+        }
         try
         {
             var offer = await registration.Peer.Connection.CreateOfferAsync(cancellationToken);
@@ -146,12 +173,15 @@ public sealed class WebRtcPublisher : IWebRtcPublisher
     // fresh offer.
     private async Task ReofferToViewerAsync(string sessionId, string viewerId, CancellationToken cancellationToken)
     {
+        if (!TryBeginIceRestart(viewerId)) return;
         try
         {
             var restartOffer = await peers.RequestIceRestartAsync(viewerId, cancellationToken);
             if (restartOffer is null)
             {
-                await OfferToViewerAsync(sessionId, viewerId, cancellationToken);
+                // No peer to restart, so this registers one and offers fresh; recovery is
+                // already what we are doing, and false keeps it from recursing back here.
+                await OfferToViewerAsync(sessionId, viewerId, recoverKnownViewer: false, cancellationToken);
                 return;
             }
             IceRestartRequested?.Invoke(viewerId);
@@ -161,6 +191,27 @@ public sealed class WebRtcPublisher : IWebRtcPublisher
         {
             await peers.RemoveViewerAsync(viewerId, CancellationToken.None);
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Claims the right to restart ICE for <paramref name="viewerId"/>, or reports that a
+    /// restart within <see cref="IceRestartDebounce"/> already covers this request. A removed
+    /// viewer leaves no claim behind: its next request registers a brand-new peer and is
+    /// offered to directly, never reaching here.
+    /// </summary>
+    private bool TryBeginIceRestart(string viewerId)
+    {
+        var now = timeProvider.GetUtcNow();
+        lock (lastIceRestartAt)
+        {
+            if (lastIceRestartAt.TryGetValue(viewerId, out var previous)
+                && now - previous < IceRestartDebounce)
+            {
+                return false;
+            }
+            lastIceRestartAt[viewerId] = now;
+            return true;
         }
     }
 
