@@ -39,7 +39,7 @@ jobs:
 
           git fetch origin             '+refs/heads/*:refs/heads/*'             '+refs/tags/*:refs/tags/*'
 
-          git remote add gitlab             "https://oauth2:${GITLAB_TOKEN}@gitlab.com/hugo.dotnet/${GITLAB_REPOSITORY}.git"
+          git remote add gitlab             "https://oauth2:${GITLAB_TOKEN}@gitlab.com/vitorhugo-java/${GITLAB_REPOSITORY}.git"
 
           git push --force --prune gitlab             'refs/heads/*:refs/heads/*'
 
