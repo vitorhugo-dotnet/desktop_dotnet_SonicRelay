@@ -418,6 +418,35 @@ public sealed class SignalingClientTests
         Assert.Equal([SignalingCloseReason.ReconnectExhausted], reasons);
     }
 
+    /// <summary>
+    /// A deliberate close tears the socket down under the pending receive, which surfaces as a
+    /// transient WebSocketException. That used to be routed into the reconnect loop with the
+    /// lifecycle token already cancelled, so the very first backoff delay threw and the client
+    /// reported ReconnectExhausted and parked in Faulted — milliseconds after a close the caller
+    /// had asked for. Production logs showed exactly that: Closing, Reconnecting, "reconnect
+    /// attempt 1" and ReconnectExhausted inside 12ms, with retries configured as unlimited.
+    /// </summary>
+    [Fact]
+    public async Task ClosingDoesNotReportReconnectExhaustedWhenTheSocketFaultsUnderTheClose()
+    {
+        var socket = new FakeWebSocketConnection { FaultPendingReceiveOnClose = true };
+        var delay = new CancellationAwareReconnectDelay();
+        var reasons = new List<SignalingCloseReason>();
+        var states = new List<SignalingConnectionState>();
+        await using var client = CreateClient(new FakeWebSocketFactory(socket), delay: delay);
+        client.Closed += reasons.Add;
+        client.StateChanged += states.Add;
+        await client.ConnectAsync("session-1");
+
+        await client.CloseAsync();
+
+        Assert.Equal([SignalingCloseReason.NormalClosure], reasons);
+        Assert.Equal(SignalingConnectionState.Closed, client.State);
+        Assert.DoesNotContain(SignalingConnectionState.Reconnecting, states);
+        Assert.DoesNotContain(SignalingConnectionState.Faulted, states);
+        Assert.Empty(delay.Delays);
+    }
+
     [Fact]
     public async Task ClosedFiresWithSessionGoneWhenTheBackendReportsTheSessionIsGone()
     {
