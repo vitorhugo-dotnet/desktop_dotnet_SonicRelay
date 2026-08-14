@@ -34,12 +34,25 @@ internal sealed class FakeWebSocketConnection : IWebSocketConnection
 {
     private readonly Channel<WebSocketInboundMessage> inbound = Channel.CreateUnbounded<WebSocketInboundMessage>();
 
+    private readonly TaskCompletionSource<WebSocketInboundMessage> receiveFault =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     public Uri? ConnectedUri { get; private set; }
     public string? AccessToken { get; private set; }
     public List<string> Sent { get; } = [];
     public WebSocketState State { get; private set; } = WebSocketState.None;
     public bool Disposed { get; private set; }
     public Exception? ConnectException { get; init; }
+
+    /// <summary>
+    /// Reproduces how a real <see cref="System.Net.WebSockets.ClientWebSocket"/> behaves when it
+    /// is torn down while a receive is pending: it is the abort — not the cancellation token —
+    /// that completes the pending read, and it completes it with a transient
+    /// <see cref="WebSocketException"/> rather than an <see cref="OperationCanceledException"/>.
+    /// The plain fake resolves the read from the token instead, which is why it could never
+    /// surface the close-vs-reconnect race.
+    /// </summary>
+    public bool FaultPendingReceiveOnClose { get; init; }
 
     public Task ConnectAsync(Uri uri, string accessToken, CancellationToken cancellationToken)
     {
@@ -59,12 +72,23 @@ internal sealed class FakeWebSocketConnection : IWebSocketConnection
         return Task.CompletedTask;
     }
 
-    public Task<WebSocketInboundMessage> ReceiveAsync(CancellationToken cancellationToken) =>
-        inbound.Reader.ReadAsync(cancellationToken).AsTask();
+    public async Task<WebSocketInboundMessage> ReceiveAsync(CancellationToken cancellationToken)
+    {
+        if (!FaultPendingReceiveOnClose)
+        {
+            return await inbound.Reader.ReadAsync(cancellationToken);
+        }
+
+        // Deliberately ignores the token: only the close may complete this read, so the test
+        // observes the WebSocketException path rather than racing it against a cancellation.
+        var read = inbound.Reader.ReadAsync(CancellationToken.None).AsTask();
+        return await await Task.WhenAny(read, receiveFault.Task);
+    }
 
     public Task CloseAsync(WebSocketCloseStatus status, string description, CancellationToken cancellationToken)
     {
         State = WebSocketState.Closed;
+        FaultPendingReceive();
         return Task.CompletedTask;
     }
 
@@ -81,7 +105,15 @@ internal sealed class FakeWebSocketConnection : IWebSocketConnection
     {
         Disposed = true;
         State = WebSocketState.Closed;
+        FaultPendingReceive();
         return ValueTask.CompletedTask;
+    }
+
+    private void FaultPendingReceive()
+    {
+        if (!FaultPendingReceiveOnClose) return;
+        receiveFault.TrySetException(
+            new WebSocketException(WebSocketError.ConnectionClosedPrematurely, "The socket was torn down."));
     }
 }
 
@@ -98,6 +130,24 @@ internal sealed class ImmediateReconnectDelay : IReconnectDelay
     public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
     {
         Delays.Add(delay);
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>
+/// An <see cref="ImmediateReconnectDelay"/> that honours cancellation the way the production
+/// <c>Task.Delay</c>-backed delay does. The immediate double swallows an already-cancelled token,
+/// so a reconnect loop entered with a cancelled lifecycle looks healthy under test while it
+/// aborts on the very first delay in production.
+/// </summary>
+internal sealed class CancellationAwareReconnectDelay : IReconnectDelay
+{
+    public List<TimeSpan> Delays { get; } = [];
+
+    public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
+    {
+        Delays.Add(delay);
+        cancellationToken.ThrowIfCancellationRequested();
         return Task.CompletedTask;
     }
 }

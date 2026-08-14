@@ -295,7 +295,17 @@ public sealed class SignalingClient : ISignalingClient
                     return;
                 }
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            // A deliberate close (CloseAsync, CloseFromReceiveLoopAsync, or disposal) cancels the
+            // lifecycle token and tears the socket down underneath this pending receive. Depending
+            // on timing that surfaces either as an OperationCanceledException or as a perfectly
+            // transient-looking WebSocketException — and the latter used to fall through to the
+            // reconnect branch below with an already-cancelled token. The first backoff delay then
+            // threw immediately, so a loop configured for unlimited retries reported
+            // ReconnectExhausted and parked the client in Faulted milliseconds after a close the
+            // caller had asked for. Faulted also meant the next connect reused a session the
+            // backend had already discarded, which came back as 410 Gone. A cancelled lifecycle
+            // means the close was intentional: there is nothing here to reconnect.
+            catch (Exception) when (cancellationToken.IsCancellationRequested)
             {
                 return;
             }
