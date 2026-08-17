@@ -3,6 +3,9 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>SonicRelay.Windows.Desktop</RootNamespace>
+    <!-- Becomes the executable's FileDescription, the name Task Manager shows. -->
+    <AssemblyTitle>SonicRelay Publisher</AssemblyTitle>
+    <Description>Capture desktop audio and publish it to SonicRelay viewers.</Description>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
