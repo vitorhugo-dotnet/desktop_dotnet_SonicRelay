@@ -7,4 +7,16 @@
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
   </PropertyGroup>
+
+  <!--
+    Public product name (dotnet_SonicRelay#38). Without these, MSBuild defaults
+    Product and AssemblyTitle to the assembly name, so Windows Explorer and Task
+    Manager would show "SonicRelay.Windows.Desktop" instead of the product name.
+    The assembly names themselves are technical identifiers the installer,
+    shortcuts and CI depend on, so they are deliberately left alone.
+  -->
+  <PropertyGroup>
+    <Product>SonicRelay</Product>
+    <Company>SonicRelay</Company>
+  </PropertyGroup>
 </Project>
