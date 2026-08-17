@@ -27,6 +27,12 @@ public enum PublisherUiState
     StreamingRelay,
     /// <summary>Signaling, capture, or a viewer connection is re-establishing itself.</summary>
     Reconnecting,
+    /// <summary>
+    /// The machine has no usable network interface, so recovery is parked rather than
+    /// retrying. Deliberately distinct from <see cref="Reconnecting"/>: no attempt budget is
+    /// being spent, and the cause is local rather than anything about the backend.
+    /// </summary>
+    WaitingForNetwork,
     /// <summary>Signaling, capture, or every viewer connection failed; retry is offered.</summary>
     Faulted,
     /// <summary>The session was ended; a new one can be created.</summary>
@@ -75,6 +81,11 @@ public static class PublisherUiStateResolver
             return PublisherUiState.Faulted;
         }
 
+        // Checked before Reconnecting: an offline machine is a more specific — and more
+        // actionable — explanation than "something is being retried".
+        if (snapshot.SignalingState == SignalingConnectionState.WaitingForNetwork)
+            return PublisherUiState.WaitingForNetwork;
+
         if (snapshot.SignalingState == SignalingConnectionState.Reconnecting
             || snapshot.AudioState == AudioCaptureState.Recovering
             || (!anyViewerConnected && viewers.Any(viewer => viewer.State == PeerConnectionState.Disconnected)))
@@ -116,6 +127,7 @@ public static class PublisherUiStateResolver
         or PublisherUiState.StreamingDirect
         or PublisherUiState.StreamingRelay
         or PublisherUiState.Reconnecting
+        or PublisherUiState.WaitingForNetwork
         or PublisherUiState.Faulted;
 
     private static bool IsRelay(IReadOnlyList<PeerConnectionDiagnostics> viewers, bool forceRelay)
@@ -185,6 +197,14 @@ public sealed record PublisherUiCapabilities(
         PublisherUiState.Reconnecting => new(
             CanAuthenticate: false, CanLogout: false, CanCreateSession: false, CanStartAudio: false,
             CanStopAudio: true, CanEndSession: true, CanRetry: true, ShowsLiveMetrics: true,
+            KeepsRunningInTray: true),
+        // Live metrics are off here on purpose: the last readings were taken over a route
+        // that no longer exists, and presenting them as current is the same lie as showing
+        // "Streaming" with no media flowing. Retry stays available — a manual retry runs the
+        // same recovery the automatic one does, just from a newer generation.
+        PublisherUiState.WaitingForNetwork => new(
+            CanAuthenticate: false, CanLogout: false, CanCreateSession: false, CanStartAudio: false,
+            CanStopAudio: true, CanEndSession: true, CanRetry: true, ShowsLiveMetrics: false,
             KeepsRunningInTray: true),
         PublisherUiState.Faulted => new(
             CanAuthenticate: false, CanLogout: false, CanCreateSession: false, CanStartAudio: false,

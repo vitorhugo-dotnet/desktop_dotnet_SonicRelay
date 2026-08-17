@@ -95,6 +95,10 @@ public sealed record DashboardViewModel
         SignalingConnectionState.Connected => ("Connected", DashboardBadge.Success),
         SignalingConnectionState.Connecting => ("Connecting", DashboardBadge.Warning),
         SignalingConnectionState.Reconnecting => ("Reconnecting", DashboardBadge.Warning),
+        // Distinct from "Reconnecting" deliberately: nothing is being retried, and the machine
+        // itself is the reason. Showing a retry state here sends the user looking at the
+        // backend for a problem that is on their own desk.
+        SignalingConnectionState.WaitingForNetwork => ("Offline", DashboardBadge.Warning),
         SignalingConnectionState.Faulted => ("Failed", DashboardBadge.Danger),
         _ => ("Disconnected", DashboardBadge.Neutral),
     };

@@ -30,6 +30,7 @@ public sealed class PublisherRuntime : IAsyncDisposable
     private readonly IWebRtcPublisher webRtcPublisher;
     private readonly WebRtcAudioBridge audioBridge;
     private readonly DeviceIdentitySession deviceIdentitySession;
+    private readonly SystemNetworkAvailability networkAvailability;
     private string? lastLoggedState;
     private bool hadActiveSession;
 
@@ -45,8 +46,10 @@ public sealed class PublisherRuntime : IAsyncDisposable
         IAudioCaptureService audioCapture,
         AudioOutputPreferenceStore audioOutput,
         DeviceIdentitySession deviceIdentitySession,
-        DiagnosticLog diagnosticLog)
+        DiagnosticLog diagnosticLog,
+        SystemNetworkAvailability networkAvailability)
     {
+        this.networkAvailability = networkAvailability;
         this.httpClient = httpClient;
         this.peers = peers;
         this.webRtcPublisher = webRtcPublisher;
@@ -128,7 +131,13 @@ public sealed class PublisherRuntime : IAsyncDisposable
         // but the client takes its handlers up front — register the publisher through
         // a composite handler after both exist.
         var signalingHandlers = new CompositeSignalingMessageHandler();
-        var signaling = new SignalingClient(configuration, deviceIdentitySession, [signalingHandlers]);
+        // The network gate keeps a machine with no route at all from spending its reconnect
+        // budget on attempts that cannot succeed, and the journal records each recovery step
+        // with the generation that produced it — the two things a post-mortem of a failed
+        // reconnect needs and the log could not previously answer.
+        var networkAvailability = new SystemNetworkAvailability();
+        var signaling = new SignalingClient(configuration, deviceIdentitySession, [signalingHandlers],
+            networkAvailability, new DiagnosticRecoveryJournal(diagnosticLog));
         var relayPreference = relayPreferenceOverride ?? new RelayPreferenceStore();
         // ICE servers (including short-lived TURN credentials) come from the
         // backend, which serves the SonicRelay coturn deployment. The public
@@ -184,7 +193,8 @@ public sealed class PublisherRuntime : IAsyncDisposable
             audio,
             audioOutput,
             deviceIdentitySession,
-            diagnosticLog);
+            diagnosticLog,
+            networkAvailability);
     }
 
     public async Task InitializeDeviceIdentityAsync(CancellationToken cancellationToken = default)
@@ -278,6 +288,7 @@ public sealed class PublisherRuntime : IAsyncDisposable
         await Workflow.DisposeAsync();
         await webRtcPublisher.DisposeAsync();
         deviceIdentitySession.Dispose();
+        networkAvailability.Dispose();
         httpClient.Dispose();
         DiagnosticLog.Dispose();
     }
