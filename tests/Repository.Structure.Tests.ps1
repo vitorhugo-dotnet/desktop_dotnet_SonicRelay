@@ -227,6 +227,23 @@ if (Test-Path -LiteralPath $workflowPath) {
     if ($missingWorkflowRequirements.Count -gt 0) {
         Write-Error "Missing CI workflow requirements:`n$($missingWorkflowRequirements -join "`n")"
     }
+
+    $unsafeReleaseNoteFragments = @(
+        'Built from `${{ github.sha }}`'
+        '- `$env:PRODUCT_NAME-$env:RUNTIME_ID-$assetVersion.zip`'
+        '- `$env:PRODUCT_NAME-$env:RUNTIME_ID-$assetVersion.exe`'
+        '- `$env:PRODUCT_NAME-$env:RUNTIME_ID-$assetVersion.msi`'
+    )
+    $unsafeReleaseNotes = $unsafeReleaseNoteFragments | Where-Object {
+        $workflow.Contains($_)
+    }
+    if ($unsafeReleaseNotes.Count -gt 0) {
+        Write-Error "CI release notes contain unsafe PowerShell backtick interpolation:`n$($unsafeReleaseNotes -join "`n")"
+    }
+
+    if ($workflow -notmatch '(?m)^\s*retry_gh\(\)\s*\{') {
+        Write-Error 'CI Linux release publishing must retry transient GitHub API 5xx responses.'
+    }
 }
 
 $releaseWorkflowPath = Join-Path $root '.github/workflows/release.yml'
