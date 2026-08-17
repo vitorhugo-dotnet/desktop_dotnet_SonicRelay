@@ -1,6 +1,8 @@
+using System.Globalization;
 using System.Net.WebSockets;
 using SonicRelay.Windows.Core.Authentication;
 using SonicRelay.Windows.Core.Configuration;
+using SonicRelay.Windows.Core.Diagnostics;
 using SonicRelay.Windows.Signaling.WebSockets;
 
 namespace SonicRelay.Windows.Signaling;
@@ -61,6 +63,8 @@ public sealed class SignalingClient : ISignalingClient
     private readonly IReconnectDelay reconnectDelay;
     private readonly IReconnectJitter reconnectJitter;
     private readonly SignalingReconnectPolicy reconnectPolicy;
+    private readonly INetworkAvailability network;
+    private readonly IRecoveryJournal journal;
     private readonly SemaphoreSlim lifecycleLock = new(1, 1);
     private readonly SemaphoreSlim sendLock = new(1, 1);
     private CancellationTokenSource? lifecycleCancellation;
@@ -68,11 +72,28 @@ public sealed class SignalingClient : ISignalingClient
     private Task? receiveTask;
     private string? activeSessionId;
 
+    /// <summary>
+    /// Monotonic id of the current recovery cycle, so journal lines from an attempt that
+    /// finished late are distinguishable from the live one's.
+    /// </summary>
+    private int connectionGeneration;
+
+    /// <summary>
+    /// How long to let a freshly-restored interface settle before retrying. An interface reports
+    /// itself usable the moment it has an address, which is routinely before it can complete a
+    /// TLS handshake; retrying into that window just burns an attempt and produces a confusing
+    /// failure in the log.
+    /// </summary>
+    internal static readonly TimeSpan DefaultNetworkStabilizationDelay = TimeSpan.FromMilliseconds(750);
+
     public SignalingClient(
         PublisherConfiguration configuration,
         IDeviceAccessTokenProvider accessTokenProvider,
-        IEnumerable<ISignalingMessageHandler> handlers)
-        : this(configuration, accessTokenProvider, handlers, new ClientWebSocketConnectionFactory(), new ReconnectDelay())
+        IEnumerable<ISignalingMessageHandler> handlers,
+        INetworkAvailability? network = null,
+        IRecoveryJournal? journal = null)
+        : this(configuration, accessTokenProvider, handlers, new ClientWebSocketConnectionFactory(),
+            new ReconnectDelay(), reconnectPolicy: null, reconnectJitter: null, network, journal)
     {
     }
 
@@ -83,8 +104,12 @@ public sealed class SignalingClient : ISignalingClient
         IWebSocketConnectionFactory connectionFactory,
         IReconnectDelay reconnectDelay,
         SignalingReconnectPolicy? reconnectPolicy = null,
-        IReconnectJitter? reconnectJitter = null)
+        IReconnectJitter? reconnectJitter = null,
+        INetworkAvailability? network = null,
+        IRecoveryJournal? journal = null)
     {
+        this.network = network ?? AlwaysAvailableNetwork.Instance;
+        this.journal = journal ?? NullRecoveryJournal.Instance;
         this.configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         this.accessTokenProvider = accessTokenProvider ?? throw new ArgumentNullException(nameof(accessTokenProvider));
         this.handlers = handlers?.ToArray() ?? throw new ArgumentNullException(nameof(handlers));
@@ -329,6 +354,11 @@ public sealed class SignalingClient : ISignalingClient
                     case ReconnectOutcome.SessionGone:
                         await HandleSessionGoneAsync();
                         return;
+                    // A cancelled lifecycle means the caller asked for the close — including a
+                    // close that landed while recovery was parked waiting for the network.
+                    // Reporting exhaustion there would tell the UI the session died on its own.
+                    case ReconnectOutcome.Exhausted when cancellationToken.IsCancellationRequested:
+                        return;
                     default:
                         Closed?.Invoke(SignalingCloseReason.ReconnectExhausted);
                         SetState(SignalingConnectionState.Faulted);
@@ -347,31 +377,139 @@ public sealed class SignalingClient : ISignalingClient
 
     private async Task<ReconnectOutcome> TryReconnectAsync(CancellationToken cancellationToken)
     {
+        var generation = ++connectionGeneration;
         SetState(SignalingConnectionState.Reconnecting);
-        for (var attempt = 0; reconnectPolicy.MaxAttempts is null || attempt < reconnectPolicy.MaxAttempts; attempt++)
+        await RecordAsync(RecoveryEvents.RecoveryStarted, generation, 0);
+
+        var attempt = 0;
+        while (reconnectPolicy.MaxAttempts is null || attempt < reconnectPolicy.MaxAttempts)
         {
+            if (!network.IsAvailable)
+            {
+                // The machine has no route at all, so every attempt would fail for a reason that
+                // says nothing about the backend. Park instead of spending budget: burning the
+                // retries here is exactly what used to leave a publisher terminally Faulted
+                // after an outage that outlasted the backoff, with the network already back.
+                if (!await WaitForNetworkAsync(generation, cancellationToken))
+                {
+                    return ReconnectOutcome.Exhausted;
+                }
+                // The machine that just came back is a new situation, not the continuation of an
+                // escalating failure against a live network, so the backoff starts over.
+                attempt = 0;
+                SetState(SignalingConnectionState.Reconnecting);
+                continue;
+            }
+
             ReconnectAttempting?.Invoke(attempt);
+            await RecordAsync(RecoveryEvents.SignalingReconnectStarted, generation, attempt);
             try
             {
                 await reconnectDelay.DelayAsync(ReconnectDelayFor(attempt), cancellationToken);
                 await OpenConnectionAsync(cancellationToken);
+                await RecordAsync(RecoveryEvents.SignalingReconnectSucceeded, generation, attempt);
                 return ReconnectOutcome.Reconnected;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                await RecordAsync(RecoveryEvents.RecoveryCancelled, generation, attempt);
                 return ReconnectOutcome.Exhausted;
             }
             catch (SignalingSessionGoneException)
             {
                 // The session is gone (410/404). Stop retrying immediately — looping on a
                 // dead session wedges the client and blocks starting a new one.
+                await RecordAsync(RecoveryEvents.RecoveryFailed, generation, attempt,
+                    new Dictionary<string, string> { ["reason"] = "session gone" });
                 return ReconnectOutcome.SessionGone;
             }
             catch (Exception exception) when (IsTransient(exception))
             {
+                attempt++;
             }
         }
+        await RecordAsync(RecoveryEvents.RecoveryFailed, generation, attempt,
+            new Dictionary<string, string> { ["reason"] = "reconnect attempts exhausted" });
         return ReconnectOutcome.Exhausted;
+    }
+
+    /// <summary>
+    /// Parks recovery until the machine has a usable interface again, then lets it settle.
+    /// Returns false if the lifecycle was cancelled while waiting (a deliberate close), in which
+    /// case there is nothing left to recover.
+    /// </summary>
+    private async Task<bool> WaitForNetworkAsync(int generation, CancellationToken cancellationToken)
+    {
+        SetState(SignalingConnectionState.WaitingForNetwork);
+        await RecordAsync(RecoveryEvents.NetworkLost, generation, 0);
+
+        var restored = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnAvailabilityChanged(bool available)
+        {
+            if (available) restored.TrySetResult();
+        }
+
+        network.AvailabilityChanged += OnAvailabilityChanged;
+        try
+        {
+            // Re-check after subscribing: the interface can come back in the window between the
+            // caller's check and this subscription, and nothing would raise the event again.
+            if (network.IsAvailable) restored.TrySetResult();
+            await using var registration = cancellationToken.Register(
+                static state => ((TaskCompletionSource)state!).TrySetCanceled(), restored);
+            await restored.Task;
+        }
+        catch (OperationCanceledException)
+        {
+            await RecordAsync(RecoveryEvents.RecoveryCancelled, generation, 0);
+            return false;
+        }
+        finally
+        {
+            network.AvailabilityChanged -= OnAvailabilityChanged;
+        }
+
+        await RecordAsync(RecoveryEvents.NetworkRestored, generation, 0);
+        try
+        {
+            await reconnectDelay.DelayAsync(DefaultNetworkStabilizationDelay, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            await RecordAsync(RecoveryEvents.RecoveryCancelled, generation, 0);
+            return false;
+        }
+        return true;
+    }
+
+    private Task RecordAsync(string @event, int generation, int attempt,
+        IReadOnlyDictionary<string, string>? properties = null)
+    {
+        var payload = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["stage"] = "signaling",
+            ["state"] = State.ToString(),
+            ["sessionCorrelationId"] = DiagnosticRedactor.MaskIdentifier(activeSessionId),
+        };
+        foreach (var pair in properties ?? new Dictionary<string, string>())
+        {
+            payload[pair.Key] = pair.Value;
+        }
+        // Journalling must never be able to break recovery: it writes to disk, and a full or
+        // read-only log directory is not a reason to abandon a session that is coming back.
+        return SafeRecordAsync(@event, generation, attempt, payload);
+    }
+
+    private async Task SafeRecordAsync(string @event, int generation, int attempt,
+        IReadOnlyDictionary<string, string> properties)
+    {
+        try
+        {
+            await journal.RecordAsync(@event, generation, attempt, properties, CancellationToken.None);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+        }
     }
 
     // Terminally releases a session the server has discarded: tears down the socket
@@ -457,6 +595,7 @@ public sealed class SignalingClient : ISignalingClient
     private bool IsActive() => State is SignalingConnectionState.Connecting
         or SignalingConnectionState.Connected
         or SignalingConnectionState.Reconnecting
+        or SignalingConnectionState.WaitingForNetwork
         or SignalingConnectionState.Closing;
 
     private bool IsTransient(Exception exception) =>

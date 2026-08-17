@@ -252,4 +252,43 @@ public sealed class PublisherUiStateResolverTests
         Assert.True(PublisherUiCapabilities.For(PublisherUiState.Idle).CanCreateSession);
         Assert.True(PublisherUiCapabilities.For(PublisherUiState.Ended).CanCreateSession);
     }
+
+    [Fact]
+    public void An_offline_machine_reads_as_waiting_for_network_not_reconnecting()
+    {
+        var snapshot = InSession with { SignalingState = SignalingConnectionState.WaitingForNetwork };
+
+        // "Reconnecting" tells the user something is being retried against the backend, and
+        // sends them looking there for a problem that is on their own desk. Nothing is being
+        // retried while the machine has no route at all.
+        Assert.Equal(
+            PublisherUiState.WaitingForNetwork,
+            PublisherUiStateResolver.Resolve(snapshot, Viewers(Viewer(PeerConnectionState.Connected))));
+    }
+
+    [Fact]
+    public void Waiting_for_network_hides_live_metrics_but_keeps_retry_and_the_session()
+    {
+        var capabilities = PublisherUiCapabilities.For(PublisherUiState.WaitingForNetwork);
+
+        // The last RTT/bitrate readings were taken over a route that no longer exists, so
+        // showing them as live is the same lie as showing "Streaming" with no media.
+        Assert.False(capabilities.ShowsLiveMetrics);
+        Assert.True(capabilities.CanRetry);
+        Assert.True(capabilities.CanEndSession);
+        Assert.True(capabilities.KeepsRunningInTray);
+    }
+
+    [Fact]
+    public void Recovering_from_an_outage_does_not_read_as_a_session_that_ended()
+    {
+        var offline = InSession with { SignalingState = SignalingConnectionState.WaitingForNetwork };
+        var previous = PublisherUiStateResolver.Resolve(offline);
+
+        // The session id survives the outage, but if WaitingForNetwork were not a session
+        // state, the moment it did drop the shell would report "Idle" instead of "Ended".
+        Assert.Equal(
+            PublisherUiState.Ended,
+            PublisherUiStateResolver.Resolve(SignedIn, previous: previous));
+    }
 }
