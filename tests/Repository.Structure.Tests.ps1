@@ -9,6 +9,10 @@ $requiredPaths = @(
     '.gitignore'
     '.github/workflows/ci.yml'
     '.github/workflows/release.yml'
+    '.github/scripts/Publish-GitHubRelease.ps1'
+    '.github/scripts/gh-retry.sh'
+    'tests/Publish-GitHubRelease.Tests.ps1'
+    'tests/gh-retry.Tests.sh'
     'src/SonicRelay.Windows.Desktop/SonicRelay.Windows.Desktop.csproj'
     'src/SonicRelay.Windows.Core/SonicRelay.Windows.Core.csproj'
     'src/SonicRelay.Windows.ApiClient/SonicRelay.Windows.ApiClient.csproj'
@@ -241,8 +245,31 @@ if (Test-Path -LiteralPath $workflowPath) {
         Write-Error "CI release notes contain unsafe PowerShell backtick interpolation:`n$($unsafeReleaseNotes -join "`n")"
     }
 
-    if ($workflow -notmatch '(?m)^\s*retry_gh\(\)\s*\{') {
-        Write-Error 'CI Linux release publishing must retry transient GitHub API 5xx responses.'
+}
+
+# Release publishing is the last step of a long, expensive build, and api.github.com
+# intermittently answers 5xx. Every workflow that publishes a release must go through the
+# retrying helpers rather than calling `gh` directly, so a transient blip cannot discard a
+# green build's packages.
+$publishingWorkflows = @('.github/workflows/ci.yml', '.github/workflows/release.yml')
+foreach ($publishingWorkflowPath in $publishingWorkflows) {
+    $fullPath = Join-Path $root $publishingWorkflowPath
+    if (-not (Test-Path -LiteralPath $fullPath)) {
+        continue
+    }
+
+    $publishingWorkflow = Get-Content -Raw -LiteralPath $fullPath
+
+    if ($publishingWorkflow -match '(?m)^\s*gh release ') {
+        Write-Error "$publishingWorkflowPath calls gh release directly; use .github/scripts/Publish-GitHubRelease.ps1 or retry_gh so transient 5xx responses are retried."
+    }
+
+    if ($publishingWorkflow -notmatch 'Publish-GitHubRelease\.ps1') {
+        Write-Error "$publishingWorkflowPath must publish releases through .github/scripts/Publish-GitHubRelease.ps1."
+    }
+
+    if ($publishingWorkflow -notmatch 'source \.github/scripts/gh-retry\.sh') {
+        Write-Error "$publishingWorkflowPath must source .github/scripts/gh-retry.sh for its Linux release steps."
     }
 }
 
@@ -263,7 +290,7 @@ if (Test-Path -LiteralPath $releaseWorkflowPath) {
         'self-contained publish' = '--self-contained true'
         'portable archive name' = 'SonicRelay\.WindowsPublisher-win-x64-\$version\.zip'
         'build metadata' = 'BUILD-INFO\.txt'
-        'release creation' = 'gh release create'
+        'release creation' = 'Publish-GitHubRelease\.ps1'
         'generated release notes' = '--generate-notes'
         'Linux packaging job' = '(?m)^\s*linux-package:\s*$'
         'Ubuntu runner for Linux packaging' = 'runs-on:\s*ubuntu-24\.04'

@@ -53,6 +53,15 @@ jobs:
         shell: pwsh
         run: ./tests/Repository.Structure.Tests.ps1
 
+      - name: Run release publishing helper tests
+        shell: pwsh
+        run: ./tests/Publish-GitHubRelease.Tests.ps1
+
+      - name: Run gh retry helper tests
+        if: matrix.os == 'ubuntu-24.04'
+        shell: bash
+        run: ./tests/gh-retry.Tests.sh
+
       - name: Run .NET tests
         run: >-
           dotnet test SonicRelay.Windows.slnx --configuration Release --no-build --no-restore
@@ -286,19 +295,25 @@ jobs:
           $tagName = '${{ steps.metadata.outputs.tag_name }}'
           $releaseTitle = 'SonicRelay Windows Publisher ${{ steps.metadata.outputs.display_version }}'
           $notesPath = Join-Path $env:GITHUB_WORKSPACE 'artifacts/release/RELEASE-NOTES.md'
-          $assetPaths = Get-ChildItem -Path 'artifacts/release' -File |
-            Where-Object { $_.Extension -in @('.zip', '.exe', '.msi', '.txt') } |
-            Select-Object -ExpandProperty FullName
+          $assetPaths = @(
+            Get-ChildItem -Path 'artifacts/release' -File |
+              Where-Object { $_.Extension -in @('.zip', '.exe', '.msi', '.txt') } |
+              Select-Object -ExpandProperty FullName
+          )
 
-          $args = @('release', 'create', $tagName)
-          $args += $assetPaths
-          $args += @('--target', '${{ github.sha }}', '--title', $releaseTitle, '--notes-file', $notesPath)
+          $extraArguments = @('--target', '${{ github.sha }}', '--notes-file', $notesPath)
 
           if ('${{ steps.metadata.outputs.is_prerelease }}' -eq 'true') {
-            $args += '--prerelease'
+            $extraArguments += '--prerelease'
           }
 
-          gh @args
+          # Retries transient GitHub API 5xx responses instead of failing a build whose
+          # packages were all produced successfully.
+          ./.github/scripts/Publish-GitHubRelease.ps1 `
+            -Tag $tagName `
+            -Title $releaseTitle `
+            -Asset $assetPaths `
+            -ExtraArgument $extraArguments
 
   package-release-linux:
     name: Package Linux release assets
@@ -361,33 +376,8 @@ jobs:
           set -euo pipefail
           distDir=artifacts/release
 
-          retry_gh() {
-            local attempt=1
-            local maxAttempts=4
-            local delaySeconds=2
-            local errorFile
-
-            while true; do
-              errorFile=$(mktemp)
-              if "$@" 2> >(tee "$errorFile" >&2); then
-                rm -f "$errorFile"
-                return 0
-              else
-                local exitCode=$?
-              fi
-
-              if (( attempt >= maxAttempts )) || ! grep -Eq 'HTTP 5[0-9]{2}' "$errorFile"; then
-                rm -f "$errorFile"
-                return "$exitCode"
-              fi
-
-              echo "::warning::GitHub API returned a 5xx response; retrying in $delaySeconds seconds (attempt $attempt/$maxAttempts)."
-              rm -f "$errorFile"
-              sleep "$delaySeconds"
-              attempt=$((attempt + 1))
-              delaySeconds=$((delaySeconds * 2))
-            done
-          }
+          # shellcheck source=.github/scripts/gh-retry.sh
+          source .github/scripts/gh-retry.sh
 
           # Merge into the Windows job's checksums-sha256.txt so there is one canonical
           # checksums file per release, covering every platform's assets.
