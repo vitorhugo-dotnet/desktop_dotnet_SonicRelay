@@ -208,15 +208,26 @@ jobs:
             $extraArgs += '--prerelease'
           }
 
-          gh release create $tag `
-            '${{ steps.assets.outputs.zip }}' `
-            '${{ steps.assets.outputs.exe }}' `
-            '${{ steps.assets.outputs.msi }}' `
-            '${{ steps.assets.outputs.checksums }}' `
-            --title $title `
-            --generate-notes `
-            --notes "Build version: $version`nCommit: $targetSha`nRuntime: win-x64" `
-            @extraArgs
+          $extraArgs += @(
+            '--generate-notes'
+            '--notes'
+            "Build version: $version`nCommit: $targetSha`nRuntime: win-x64"
+          )
+
+          $assets = @(
+            '${{ steps.assets.outputs.zip }}'
+            '${{ steps.assets.outputs.exe }}'
+            '${{ steps.assets.outputs.msi }}'
+            '${{ steps.assets.outputs.checksums }}'
+          )
+
+          # Retries transient GitHub API 5xx responses instead of failing a release whose
+          # packages were all produced successfully.
+          ./.github/scripts/Publish-GitHubRelease.ps1 `
+            -Tag $tag `
+            -Title $title `
+            -Asset $assets `
+            -ExtraArgument $extraArgs
 
   linux-package:
     name: Package Linux release assets
@@ -274,17 +285,20 @@ jobs:
           set -euo pipefail
           distDir=artifacts/release
 
+          # shellcheck source=.github/scripts/gh-retry.sh
+          source .github/scripts/gh-retry.sh
+
           # Merge into the Windows job's checksums-sha256.txt so there is one canonical
           # checksums file per release, covering every platform's assets.
-          gh release download "$RELEASE_TAG" --pattern checksums-sha256.txt --dir "$distDir" --clobber
+          retry_gh gh release download "$RELEASE_TAG" --pattern checksums-sha256.txt --dir "$distDir" --clobber
           ( cd "$distDir" && sha256sum SonicRelay-LinuxPublisher-*.tar.gz SonicRelay-LinuxPublisher-*.deb SonicRelay-LinuxPublisher-*.rpm SonicRelay-LinuxPublisher-*.AppImage >> checksums-sha256.txt )
 
-          currentNotes=$(gh release view "$RELEASE_TAG" --json body --jq .body)
+          currentNotes=$(retry_gh gh release view "$RELEASE_TAG" --json body --jq .body)
           linuxNotes=$(printf '\n\n## Linux assets\n\n- `SonicRelay-LinuxPublisher-linux-x64-%s.tar.gz`: portable self-contained folder archive.\n- `SonicRelay-LinuxPublisher-linux-x64-%s.deb`: Debian/Ubuntu package (officially Ubuntu 24.04).\n- `SonicRelay-LinuxPublisher-linux-x64-%s.rpm`: Fedora package (best effort).\n- `SonicRelay-LinuxPublisher-linux-x64-%s.AppImage`: portable single-file app for any x64 glibc-based distribution.\n\nSee `docs/linux-publisher.md` for installation, dependencies, and known limitations.\n' "$RELEASE_VERSION" "$RELEASE_VERSION" "$RELEASE_VERSION" "$RELEASE_VERSION")
 
-          gh release edit "$RELEASE_TAG" --notes "${currentNotes}${linuxNotes}"
+          retry_gh gh release edit "$RELEASE_TAG" --notes "${currentNotes}${linuxNotes}"
 
-          gh release upload "$RELEASE_TAG" \
+          retry_gh gh release upload "$RELEASE_TAG" \
             "$distDir"/SonicRelay-LinuxPublisher-*.tar.gz \
             "$distDir"/SonicRelay-LinuxPublisher-*.deb \
             "$distDir"/SonicRelay-LinuxPublisher-*.rpm \
