@@ -88,6 +88,9 @@ public sealed class DesktopTrayController : IDisposable
             case TrayCommand.Status:
                 ShowWindow();
                 break;
+            case TrayCommand.CreateSession:
+                Execute(viewModel.CreateSessionCommand);
+                break;
             case TrayCommand.StartStream:
                 Execute(viewModel.StartAudioCommand);
                 break;

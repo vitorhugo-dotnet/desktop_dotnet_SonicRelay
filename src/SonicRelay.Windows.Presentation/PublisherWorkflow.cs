@@ -45,6 +45,16 @@ public sealed class PublisherWorkflow : IAsyncDisposable
     public PublisherSnapshot State { get; private set; }
     public event Action<PublisherSnapshot>? StateChanged;
 
+    /// <summary>
+    /// Raised for every line appended to <see cref="PublisherSnapshot.ActivityLog"/>, independent
+    /// of whether the tracked state fields (signaling/audio/session/error) changed. A persisted
+    /// diagnostic writer that only reacts to state-signature changes silently drops messages like
+    /// "Session ended." when the session ends without an accompanying signaling/audio state change
+    /// — exactly the gap that made a real production incident undiagnosable after the fact, since
+    /// the in-memory ActivityLog had the line but the exported log did not.
+    /// </summary>
+    public event Action<string>? LogAppended;
+
     public Task InitializeDeviceIdentityAsync(CancellationToken cancellationToken = default) =>
         ExecuteAsync(async token =>
         {
@@ -357,6 +367,10 @@ public sealed class PublisherWorkflow : IAsyncDisposable
             State = next;
         }
         StateChanged?.Invoke(next);
+        if (logMessage is not null)
+        {
+            LogAppended?.Invoke(logMessage);
+        }
     }
 
     public async ValueTask DisposeAsync()
