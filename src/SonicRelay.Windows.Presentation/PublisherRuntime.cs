@@ -31,6 +31,7 @@ public sealed class PublisherRuntime : IAsyncDisposable
     private readonly WebRtcAudioBridge audioBridge;
     private readonly DeviceIdentitySession deviceIdentitySession;
     private readonly SystemNetworkAvailability networkAvailability;
+    private readonly ResourceUsageSampler resourceUsageSampler;
     private string? lastLoggedState;
     private bool hadActiveSession;
 
@@ -47,9 +48,11 @@ public sealed class PublisherRuntime : IAsyncDisposable
         AudioOutputPreferenceStore audioOutput,
         DeviceIdentitySession deviceIdentitySession,
         DiagnosticLog diagnosticLog,
-        SystemNetworkAvailability networkAvailability)
+        SystemNetworkAvailability networkAvailability,
+        ResourceUsageSampler resourceUsageSampler)
     {
         this.networkAvailability = networkAvailability;
+        this.resourceUsageSampler = resourceUsageSampler;
         this.httpClient = httpClient;
         this.peers = peers;
         this.webRtcPublisher = webRtcPublisher;
@@ -128,6 +131,10 @@ public sealed class PublisherRuntime : IAsyncDisposable
             Environment.MachineName);
 
         var diagnosticLog = new DiagnosticLog();
+        // Samples CPU/memory/network throughout the run (not just while streaming) so a
+        // post-mortem has a baseline to compare a suspicious reading against — "was this normal
+        // for this machine, or a spike?" needs both.
+        var resourceUsageSampler = new ResourceUsageSampler(new ProcessRawResourceCounterSource(), diagnosticLog);
         // The WebRTC publisher needs the signaling client to send offers/candidates,
         // but the client takes its handlers up front — register the publisher through
         // a composite handler after both exist.
@@ -195,7 +202,8 @@ public sealed class PublisherRuntime : IAsyncDisposable
             audioOutput,
             deviceIdentitySession,
             diagnosticLog,
-            networkAvailability);
+            networkAvailability,
+            resourceUsageSampler);
     }
 
     public async Task InitializeDeviceIdentityAsync(CancellationToken cancellationToken = default)
@@ -301,6 +309,7 @@ public sealed class PublisherRuntime : IAsyncDisposable
         await audioBridge.DisposeAsync();
         await Workflow.DisposeAsync();
         await webRtcPublisher.DisposeAsync();
+        await resourceUsageSampler.DisposeAsync();
         deviceIdentitySession.Dispose();
         networkAvailability.Dispose();
         httpClient.Dispose();
