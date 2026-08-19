@@ -83,6 +83,27 @@ public sealed class PublisherWorkflowTests
     }
 
     [Fact]
+    public async Task EndSessionRaisesLogAppendedEvenThoughTheTrackedStateSignatureDoesNotChange()
+    {
+        // Regression test: a real production incident went undiagnosable because the persisted
+        // diagnostic log only reacted to changes in (IsAuthenticated, SignalingState, AudioState,
+        // ViewerCount, ErrorMessage) — none of which EndSessionAsync's SetState call touches, since
+        // it only clears SessionId. LogAppended must fire for every activity line regardless, so a
+        // consumer that persists every line (not just ones that also flip a tracked field) never
+        // drops "Session ended.".
+        await using var fixture = new DeviceIdentityFixture();
+        await fixture.Workflow.InitializeDeviceIdentityAsync();
+        await fixture.Workflow.CreateSessionAsync();
+        await fixture.Workflow.StartAudioAsync();
+        var appended = new List<string>();
+        fixture.Workflow.LogAppended += appended.Add;
+
+        await fixture.Workflow.EndSessionAsync();
+
+        Assert.Contains("Session ended.", appended);
+    }
+
+    [Fact]
     public async Task LogoutEndsTheActiveSessionAndForgetsTheDeviceIdentity()
     {
         await using var fixture = new DeviceIdentityFixture();

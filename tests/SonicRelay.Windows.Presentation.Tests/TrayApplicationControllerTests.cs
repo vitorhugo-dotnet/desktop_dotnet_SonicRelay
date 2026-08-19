@@ -88,6 +88,31 @@ public sealed class TrayApplicationControllerTests
     }
 
     [Fact]
+    public void Menu_offers_create_session_when_idle_with_device_identity()
+    {
+        // Regression coverage: recovering from a session that ended unexpectedly while the
+        // window was hidden to tray used to require reopening the window and clicking through
+        // — with no cue at all from the tray itself that anything needed doing. One click here
+        // is the difference between "click Create session" and "the app looks frozen, force-quit
+        // and reopen it".
+        var menu = Controller(true).BuildMenu(DeviceReady);
+
+        Assert.Contains(menu, item => item.Command == TrayCommand.CreateSession && item.Enabled);
+    }
+
+    [Fact]
+    public void Menu_hides_create_session_once_a_session_exists()
+    {
+        Assert.DoesNotContain(Controller(true).BuildMenu(Streaming), item => item.Command == TrayCommand.CreateSession);
+    }
+
+    [Fact]
+    public void Menu_hides_create_session_without_device_identity()
+    {
+        Assert.DoesNotContain(Controller(true).BuildMenu(null), item => item.Command == TrayCommand.CreateSession);
+    }
+
+    [Fact]
     public void Start_stream_is_enabled_only_when_startable()
     {
         var ready = DeviceReady with { SessionId = Guid.NewGuid() };

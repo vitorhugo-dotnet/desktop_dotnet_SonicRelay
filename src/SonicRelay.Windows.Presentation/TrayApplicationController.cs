@@ -7,7 +7,7 @@ namespace SonicRelay.Windows.Presentation;
 public enum TrayCloseDecision { Hide, Quit, MinimizeNormally }
 
 /// <summary>A command the tray menu can raise.</summary>
-public enum TrayCommand { Open, Status, StartStream, StopStream, CopySessionCode, ReconnectSignaling, Quit }
+public enum TrayCommand { Open, Status, CreateSession, StartStream, StopStream, CopySessionCode, ReconnectSignaling, Quit }
 
 /// <summary>One entry of the tray context menu.</summary>
 public sealed record TrayMenuItem(TrayCommand Command, string Label, bool Enabled = true);
@@ -51,6 +51,15 @@ public sealed class TrayApplicationController(Func<bool> keepRunningInTray)
             new(TrayCommand.Open, "Open SonicRelay"),
             new(TrayCommand.Status, TooltipFor(state), Enabled: false),
         };
+
+        // Offer a one-click way back to a working session from the tray itself: without this,
+        // a session that ends while the window is hidden (minimized to tray) has no recovery
+        // path short of reopening the window and clicking through — which, if the user does not
+        // notice the session ended, looks indistinguishable from the app being stuck.
+        if (state?.CanCreateSession == true)
+        {
+            items.Add(new TrayMenuItem(TrayCommand.CreateSession, "Create session"));
+        }
 
         if (state?.CanStopAudio == true)
         {

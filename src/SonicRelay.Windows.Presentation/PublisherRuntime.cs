@@ -64,6 +64,7 @@ public sealed class PublisherRuntime : IAsyncDisposable
         DiagnosticLog = diagnosticLog;
         ReportExporter = new DiagnosticReportExporter();
         Workflow.StateChanged += OnWorkflowStateChanged;
+        Workflow.LogAppended += OnWorkflowLogAppended;
         _ = WriteDiagnosticAsync("runtime", "Publisher runtime configured.", new Dictionary<string, string>
         {
             ["backend"] = DiagnosticRedactor.BackendHost(backendBaseUrl)
@@ -235,6 +236,18 @@ public sealed class PublisherRuntime : IAsyncDisposable
         });
     }
 
+    /// <summary>
+    /// Persists every workflow activity line, independent of <see cref="OnWorkflowStateChanged"/>'s
+    /// state-signature dedup. That dedup exists to keep "publisher-state" from spamming a line per
+    /// no-op update, but it also means a message like "Session ended." — which changes only
+    /// SessionId, a field the signature does not track — never reached the on-disk log even though
+    /// it was right there in the UI's ActivityLog. This is the only place that gap is closed, so a
+    /// post-mortem of a dropped connection always has the actual reason, not just a state trail
+    /// that quietly stops.
+    /// </summary>
+    private void OnWorkflowLogAppended(string message) =>
+        _ = WriteDiagnosticAsync("workflow", message, NoProperties);
+
     private async Task WriteDiagnosticAsync(string category, string message, IReadOnlyDictionary<string, string> properties)
     {
         try
@@ -282,6 +295,7 @@ public sealed class PublisherRuntime : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         Workflow.StateChanged -= OnWorkflowStateChanged;
+        Workflow.LogAppended -= OnWorkflowLogAppended;
         // Stop the audio pump before the workflow disposes the capture service,
         // then tear down the WebRTC publisher (which disposes the peer manager).
         await audioBridge.DisposeAsync();
