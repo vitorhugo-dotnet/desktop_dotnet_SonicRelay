@@ -167,8 +167,24 @@ public sealed class DesktopTrayController : IDisposable
         trayIcon.Dispose();
     }
 
-    // A small self-contained icon (teal ring on a blue tile) so the tray needs no asset file.
+    // Uses the bundled SonicRelay brand icon so the tray matches the window/taskbar icon;
+    // falls back to a small drawn placeholder (teal ring on a blue tile) if the asset can't
+    // be loaded, so a packaging mistake never stops the app from starting.
     private static WindowIcon? TryCreateIcon()
+    {
+        try
+        {
+            using var assetStream = AssetLoader.Open(
+                new Uri("avares://SonicRelay.Windows.Desktop/Assets/sonicrelay.png"));
+            return new WindowIcon(assetStream);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            return TryDrawFallbackIcon();
+        }
+    }
+
+    private static WindowIcon? TryDrawFallbackIcon()
     {
         try
         {
