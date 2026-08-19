@@ -1,54 +1,98 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
   <defs>
     <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0" stop-color="#0c1322"/>
-      <stop offset="1" stop-color="#070a12"/>
+      <stop offset="0" stop-color="#050810"/>
+      <stop offset="1" stop-color="#000000"/>
     </linearGradient>
+    <linearGradient id="topGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0" stop-color="#8CFCEF"/>
+      <stop offset="0.5" stop-color="#2FE0E0"/>
+      <stop offset="1" stop-color="#1FA9DE"/>
+    </linearGradient>
+    <linearGradient id="botGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0" stop-color="#3C6BFF"/>
+      <stop offset="0.5" stop-color="#4E4EE2"/>
+      <stop offset="1" stop-color="#6B3FDA"/>
+    </linearGradient>
+    <linearGradient id="barGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0" stop-color="#8CF6EA"/>
+      <stop offset="1" stop-color="#5A7CF2"/>
+    </linearGradient>
+    <radialGradient id="beadTopGrad" cx="35%" cy="30%" r="75%">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.4" stop-color="#BFF7FF"/>
+      <stop offset="1" stop-color="#22B8E8"/>
+    </radialGradient>
+    <radialGradient id="beadBotGrad" cx="35%" cy="30%" r="75%">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.4" stop-color="#C8CCFF"/>
+      <stop offset="1" stop-color="#4B57E0"/>
+    </radialGradient>
     <filter id="glow" x="-100%" y="-100%" width="300%" height="300%">
-      <feGaussianBlur stdDeviation="14" result="blur"/>
-      <feMerge>
-        <feMergeNode in="blur"/>
-        <feMergeNode in="blur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
+      <feGaussianBlur stdDeviation="9" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
     <filter id="glowSoft" x="-80%" y="-80%" width="260%" height="260%">
-      <feGaussianBlur stdDeviation="5" result="blur"/>
-      <feMerge>
-        <feMergeNode in="blur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
+      <feGaussianBlur stdDeviation="5" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
   </defs>
 
-  <rect width="512" height="512" rx="108" fill="url(#bgGrad)"/>
+  <rect width="512" height="512" rx="112" fill="url(#bgGrad)"/>
 
+  <!-- swooshes reversed so the path starts away from the dot (thick end, round cap) and
+       ends at the dot (thin tip); 3 layered strokes, wider ones dasharray-clipped to the
+       start portion, taper the visible band toward the dot -->
   <g filter="url(#glow)">
-    <path d="M 158 140 A 118 118 0 0 1 276 258" fill="none" stroke="#42EED2" stroke-width="26" stroke-linecap="round"/>
-    <path d="M 354 372 A 118 118 0 0 1 236 254" fill="none" stroke="#4457D6" stroke-width="26" stroke-linecap="round"/>
-    <circle cx="158" cy="140" r="18" fill="#5CF5DD"/>
-    <circle cx="354" cy="372" r="18" fill="#5468E0"/>
+    <path d="M 276 258 A 118 118 0 0 0 158 140" fill="none" stroke="url(#topGrad)" stroke-width="9" stroke-linecap="round"/>
+    <path d="M 276 258 A 118 118 0 0 0 158 140" fill="none" stroke="url(#topGrad)" stroke-width="15" stroke-linecap="butt" pathLength="100" stroke-dasharray="80 20"/>
+    <path d="M 276 258 A 118 118 0 0 0 158 140" fill="none" stroke="url(#topGrad)" stroke-width="20" stroke-linecap="butt" pathLength="100" stroke-dasharray="58 42"/>
+    <path d="M 276 258 A 118 118 0 0 0 158 140" fill="none" stroke="url(#topGrad)" stroke-width="25" stroke-linecap="butt" pathLength="100" stroke-dasharray="36 64"/>
+    <path d="M 276 258 A 118 118 0 0 0 158 140" fill="none" stroke="url(#topGrad)" stroke-width="29" stroke-linecap="butt" pathLength="100" stroke-dasharray="16 84"/>
+    <circle cx="276" cy="258" r="15" fill="url(#topGrad)"/>
+
+    <path d="M 236 254 A 118 118 0 0 0 354 372" fill="none" stroke="url(#botGrad)" stroke-width="9" stroke-linecap="round"/>
+    <path d="M 236 254 A 118 118 0 0 0 354 372" fill="none" stroke="url(#botGrad)" stroke-width="15" stroke-linecap="butt" pathLength="100" stroke-dasharray="80 20"/>
+    <path d="M 236 254 A 118 118 0 0 0 354 372" fill="none" stroke="url(#botGrad)" stroke-width="20" stroke-linecap="butt" pathLength="100" stroke-dasharray="58 42"/>
+    <path d="M 236 254 A 118 118 0 0 0 354 372" fill="none" stroke="url(#botGrad)" stroke-width="25" stroke-linecap="butt" pathLength="100" stroke-dasharray="36 64"/>
+    <path d="M 236 254 A 118 118 0 0 0 354 372" fill="none" stroke="url(#botGrad)" stroke-width="29" stroke-linecap="butt" pathLength="100" stroke-dasharray="16 84"/>
+    <circle cx="236" cy="254" r="15" fill="url(#botGrad)"/>
   </g>
 
-  <g stroke="#42EED2" stroke-width="7" fill="none" stroke-linecap="round" opacity="0.95">
+  <!-- gloss highlight hugging the outer edge of the thick (far-from-dot) end -->
+  <g opacity="0.5">
+    <path d="M 288 246 A 132 132 0 0 0 232 176" fill="none" stroke="#EAFFFC" stroke-width="6" stroke-linecap="round"/>
+    <path d="M 224 266 A 132 132 0 0 0 280 336" fill="none" stroke="#E4E9FF" stroke-width="6" stroke-linecap="round"/>
+  </g>
+
+  <!-- glass beads at the thin tips -->
+  <g filter="url(#glowSoft)">
+    <circle cx="158" cy="140" r="16" fill="url(#beadTopGrad)"/>
+    <circle cx="354" cy="372" r="16" fill="url(#beadBotGrad)"/>
+  </g>
+
+  <!-- left sound-wave arcs -->
+  <g stroke="#42EED2" stroke-width="7" fill="none" stroke-linecap="round" opacity="0.95" filter="url(#glowSoft)">
     <path d="M 118 168 A 46 46 0 0 0 118 112"/>
     <path d="M 96 186 A 74 74 0 0 0 96 94"/>
     <path d="M 74 204 A 102 102 0 0 0 74 76"/>
   </g>
 
-  <g stroke="#4457D6" stroke-width="7" fill="none" stroke-linecap="round" opacity="0.95">
+  <!-- right sound-wave arcs -->
+  <g stroke="#4A5FD9" stroke-width="7" fill="none" stroke-linecap="round" opacity="0.95" filter="url(#glowSoft)">
     <path d="M 394 344 A 46 46 0 0 0 394 400"/>
     <path d="M 416 326 A 74 74 0 0 0 416 418"/>
     <path d="M 438 308 A 102 102 0 0 0 438 436"/>
   </g>
 
+  <!-- center equalizer bars -->
   <g stroke-linecap="round" filter="url(#glowSoft)">
-    <line x1="196" y1="242" x2="196" y2="268" stroke="#7FEBDA" stroke-width="11"/>
-    <line x1="218" y1="228" x2="218" y2="282" stroke="#9FF3E4" stroke-width="11"/>
-    <line x1="240" y1="210" x2="240" y2="300" stroke="#DFFBF4" stroke-width="12"/>
-    <line x1="262" y1="188" x2="262" y2="322" stroke="#FFFFFF" stroke-width="13"/>
-    <line x1="284" y1="210" x2="284" y2="300" stroke="#E4E8FC" stroke-width="12"/>
-    <line x1="306" y1="228" x2="306" y2="282" stroke="#C0C9F8" stroke-width="11"/>
-    <line x1="328" y1="242" x2="328" y2="268" stroke="#A4AFF5" stroke-width="11"/>
+    <line x1="196" y1="242" x2="196" y2="268" stroke="url(#barGrad)" stroke-width="11"/>
+    <line x1="218" y1="228" x2="218" y2="282" stroke="url(#barGrad)" stroke-width="11"/>
+    <line x1="240" y1="210" x2="240" y2="300" stroke="url(#barGrad)" stroke-width="12"/>
+    <line x1="262" y1="188" x2="262" y2="322" stroke="url(#barGrad)" stroke-width="13"/>
+    <line x1="284" y1="210" x2="284" y2="300" stroke="url(#barGrad)" stroke-width="12"/>
+    <line x1="306" y1="228" x2="306" y2="282" stroke="url(#barGrad)" stroke-width="11"/>
+    <line x1="328" y1="242" x2="328" y2="268" stroke="url(#barGrad)" stroke-width="11"/>
   </g>
 </svg>
