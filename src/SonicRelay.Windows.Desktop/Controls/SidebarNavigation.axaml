@@ -9,12 +9,10 @@
     <DockPanel LastChildFill="True" Margin="16,20">
       <!-- Brand mark -->
       <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="12" Margin="4,0,0,28">
-        <Border Width="38" Height="38"
-                CornerRadius="{StaticResource Sonic.RadiusMd}"
-                Background="{DynamicResource Sonic.AccentBlueBrush}">
-          <TextBlock Text="VH" FontWeight="Bold" FontSize="{StaticResource Sonic.FontSizeTitle}"
-                     Foreground="{DynamicResource Sonic.TextPrimaryBrush}"
-                     HorizontalAlignment="Center" VerticalAlignment="Center" />
+        <Border Width="38" Height="38" CornerRadius="{StaticResource Sonic.RadiusMd}"
+                ClipToBounds="True">
+          <Image Source="avares://SonicRelay.Windows.Desktop/Assets/sonicrelay.png"
+                 Stretch="UniformToFill" Width="38" Height="38" />
         </Border>
         <StackPanel Spacing="0" VerticalAlignment="Center">
           <TextBlock Text="SonicRelay" FontWeight="SemiBold" FontSize="{StaticResource Sonic.FontSizeTitle}"

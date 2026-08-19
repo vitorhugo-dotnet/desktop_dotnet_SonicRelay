@@ -6,6 +6,7 @@
         x:Name="RootWindow"
         x:DataType="vm:MainWindowViewModel"
         Title="SonicRelay Publisher"
+        Icon="avares://SonicRelay.Windows.Desktop/Assets/sonicrelay.png"
         Width="1200" Height="820"
         MinWidth="880" MinHeight="620"
         Background="{DynamicResource Sonic.AppBackgroundBrush}">

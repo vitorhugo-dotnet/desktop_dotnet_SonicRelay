@@ -9,6 +9,9 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version of SonicRelay Windows Publisher is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
+    <Icon Id="SonicRelayIcon" SourceFile="$(PublishDir)\SonicRelay.Windows.Desktop.exe" />
+    <Property Id="ARPPRODUCTICON" Value="SonicRelayIcon" />
+
     <StandardDirectory Id="LocalAppDataFolder">
       <Directory Id="SonicRelayRootFolder" Name="SonicRelay">
         <Directory Id="INSTALLFOLDER" Name="WindowsPublisher" />

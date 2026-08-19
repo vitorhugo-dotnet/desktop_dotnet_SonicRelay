@@ -9,7 +9,17 @@
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <!-- Embeds the SonicRelay brand icon into the exe so Explorer, the taskbar, Alt-Tab,
+         and the Start menu search result show it instead of the default generic icon. -->
+    <ApplicationIcon>Assets\sonicrelay.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- .ico is embedded into the exe via ApplicationIcon above (a build-time /win32icon
+         argument, not an Avalonia asset); the .png is the runtime bitmap for the window
+         titlebar and tray icons, loaded through avares://. -->
+    <AvaloniaResource Include="Assets\sonicrelay.png" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.3.2" />
