@@ -17,10 +17,24 @@ public sealed class WebRtcPublisher : IWebRtcPublisher
     /// </summary>
     private static readonly TimeSpan IceRestartDebounce = TimeSpan.FromSeconds(2);
 
+    /// <summary>
+    /// How many consecutive ICE restarts a viewer's existing peer connection gets before its
+    /// ICE agent is presumed stuck rather than merely slow, and the peer is torn down and
+    /// rebuilt from scratch instead of restarted again in place. Sized around a real incident
+    /// where a viewer's ICE kept failing and being restarted on the same peer connection every
+    /// ~15 seconds for over a minute without ever converging, and only recovered once the
+    /// viewer app was manually disconnected and reconnected — which rebuilt the peer instead
+    /// of restarting it. A restart that actually works resets the count (see
+    /// <see cref="ResetRecoveredViewers"/>), so a viewer with a healthy-but-flaky connection
+    /// never gets rebuilt just for reconnecting often over a long session.
+    /// </summary>
+    private const int MaxConsecutiveIceRestarts = 3;
+
     private readonly ISignalingClient signaling;
     private readonly IPeerConnectionManager peers;
     private readonly TimeProvider timeProvider;
     private readonly Dictionary<string, DateTimeOffset> lastIceRestartAt = [];
+    private readonly Dictionary<string, int> consecutiveIceRestarts = [];
     private string? activeSessionId;
     private string? lastError;
     private bool disposed;
@@ -32,6 +46,7 @@ public sealed class WebRtcPublisher : IWebRtcPublisher
         this.timeProvider = timeProvider ?? TimeProvider.System;
         peers.LocalIceCandidateReady += SendLocalIceCandidateAsync;
         peers.DiagnosticsChanged += PublishDiagnostics;
+        peers.DiagnosticsChanged += ResetRecoveredViewers;
     }
 
     public WebRtcPublisherDiagnostics Diagnostics =>
@@ -39,6 +54,13 @@ public sealed class WebRtcPublisher : IWebRtcPublisher
 
     public event Action<WebRtcPublisherDiagnostics>? DiagnosticsChanged;
     public event Action<string>? IceRestartRequested;
+
+    /// <summary>
+    /// Raised instead of <see cref="IceRestartRequested"/> when a viewer's peer connection is
+    /// torn down and rebuilt from scratch after too many consecutive ICE restarts failed to
+    /// ever reach <see cref="PeerConnectionState.Connected"/>.
+    /// </summary>
+    public event Action<string>? PeerRebuildRequested;
 
     public async Task HandleAsync(SignalingMessageEnvelope message, CancellationToken cancellationToken = default)
     {
@@ -65,6 +87,7 @@ public sealed class WebRtcPublisher : IWebRtcPublisher
                 case SignalingMessageTypes.SessionLeft when message.From is not null:
                     ValidateSession(message);
                     await peers.RemoveViewerAsync(message.From, cancellationToken);
+                    ForgetRecoveryState(message.From);
                     break;
                 case SignalingMessageTypes.ParticipantReconnected when message.From is not null:
                     var reconnectSessionId = RequireSessionId(message);
@@ -76,6 +99,7 @@ public sealed class WebRtcPublisher : IWebRtcPublisher
                     ValidateSession(message);
                     await peers.RemoveAllAsync(cancellationToken);
                     activeSessionId = null;
+                    lock (consecutiveIceRestarts) consecutiveIceRestarts.Clear();
                     break;
                 // ParticipantDisconnected is intentionally a no-op: it just means the
                 // viewer's socket dropped within the backend's reconnect grace period.
@@ -161,6 +185,7 @@ public sealed class WebRtcPublisher : IWebRtcPublisher
         catch
         {
             await peers.RemoveViewerAsync(viewerId, CancellationToken.None);
+            ForgetRecoveryState(viewerId);
             throw;
         }
     }
@@ -170,10 +195,19 @@ public sealed class WebRtcPublisher : IWebRtcPublisher
     // likely took ICE down with it too, so renegotiate the existing peer with an ICE
     // restart instead of tearing it down and losing playback state. If no peer exists yet
     // (e.g. the publisher itself only just adopted the session), fall back to a normal
-    // fresh offer.
+    // fresh offer. Once a viewer has burned through too many consecutive restarts without
+    // ever reconnecting, give up on the existing peer and rebuild it instead (see
+    // `ShouldRebuildInsteadOfRestart`).
     private async Task ReofferToViewerAsync(string sessionId, string viewerId, CancellationToken cancellationToken)
     {
         if (!TryBeginIceRestart(viewerId)) return;
+        if (ShouldRebuildInsteadOfRestart(viewerId))
+        {
+            await peers.RemoveViewerAsync(viewerId, CancellationToken.None);
+            PeerRebuildRequested?.Invoke(viewerId);
+            await OfferToViewerAsync(sessionId, viewerId, recoverKnownViewer: false, cancellationToken);
+            return;
+        }
         try
         {
             var restartOffer = await peers.RequestIceRestartAsync(viewerId, cancellationToken);
@@ -190,8 +224,48 @@ public sealed class WebRtcPublisher : IWebRtcPublisher
         catch
         {
             await peers.RemoveViewerAsync(viewerId, CancellationToken.None);
+            ForgetRecoveryState(viewerId);
             throw;
         }
+    }
+
+    /// <summary>
+    /// Counts this restart attempt against <paramref name="viewerId"/>'s consecutive-failure
+    /// streak and reports whether it has now exceeded <see cref="MaxConsecutiveIceRestarts"/>.
+    /// The streak resets whenever the viewer's peer actually reaches
+    /// <see cref="PeerConnectionState.Connected"/> (see <see cref="ResetRecoveredViewers"/>),
+    /// so a viewer that reconnects often but successfully is never rebuilt for it.
+    /// </summary>
+    private bool ShouldRebuildInsteadOfRestart(string viewerId)
+    {
+        lock (consecutiveIceRestarts)
+        {
+            var count = consecutiveIceRestarts.GetValueOrDefault(viewerId) + 1;
+            if (count > MaxConsecutiveIceRestarts)
+            {
+                consecutiveIceRestarts.Remove(viewerId);
+                return true;
+            }
+            consecutiveIceRestarts[viewerId] = count;
+            return false;
+        }
+    }
+
+    // Fires on every peer diagnostics update (connects, disconnects, restarts...) for any
+    // viewer; a viewer whose peer just reached Connected proved its ICE agent still works, so
+    // its consecutive-restart streak no longer reflects a stuck connection.
+    private void ResetRecoveredViewers()
+    {
+        foreach (var diagnostics in peers.GetDiagnostics())
+        {
+            if (diagnostics.State != PeerConnectionState.Connected) continue;
+            lock (consecutiveIceRestarts) consecutiveIceRestarts.Remove(diagnostics.ViewerId);
+        }
+    }
+
+    private void ForgetRecoveryState(string viewerId)
+    {
+        lock (consecutiveIceRestarts) consecutiveIceRestarts.Remove(viewerId);
     }
 
     /// <summary>
@@ -322,6 +396,7 @@ public sealed class WebRtcPublisher : IWebRtcPublisher
         disposed = true;
         peers.LocalIceCandidateReady -= SendLocalIceCandidateAsync;
         peers.DiagnosticsChanged -= PublishDiagnostics;
+        peers.DiagnosticsChanged -= ResetRecoveredViewers;
         await peers.DisposeAsync();
     }
 }

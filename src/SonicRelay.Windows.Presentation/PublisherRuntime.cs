@@ -171,6 +171,7 @@ public sealed class PublisherRuntime : IAsyncDisposable
         signaling.ReconnectAttempting += attempt => LogReconnectAttempt(diagnosticLog, attempt);
         signaling.Closed += reason => LogSignalingClosed(diagnosticLog, reason);
         webRtcPublisher.IceRestartRequested += viewerId => LogIceRestart(diagnosticLog, viewerId);
+        webRtcPublisher.PeerRebuildRequested += viewerId => LogPeerRebuild(diagnosticLog, viewerId);
 
         var audio = audioCapture;
         var audioOutput = audioOutputPreferenceOverride ?? new AudioOutputPreferenceStore();
@@ -189,6 +190,8 @@ public sealed class PublisherRuntime : IAsyncDisposable
         // debugging a dropped viewer needs to see.
         webRtcPublisher.IceRestartRequested += _ =>
             workflow.LogActivity("WebRTC: ICE restart requested for a reconnected viewer.");
+        webRtcPublisher.PeerRebuildRequested += _ =>
+            workflow.LogActivity("WebRTC: rebuilding peer connection after repeated ICE restart failures.");
         return new PublisherRuntime(
             http,
             workflow,
@@ -293,6 +296,18 @@ public sealed class PublisherRuntime : IAsyncDisposable
         try
         {
             await log.WriteAsync("ice-restart", "ICE restart requested for a reconnected viewer.", new Dictionary<string, string>
+            {
+                ["viewerId"] = viewerId
+            });
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ObjectDisposedException) { }
+    }
+
+    private static async void LogPeerRebuild(DiagnosticLog log, string viewerId)
+    {
+        try
+        {
+            await log.WriteAsync("peer-rebuild", "Peer connection rebuilt after repeated ICE restart failures.", new Dictionary<string, string>
             {
                 ["viewerId"] = viewerId
             });
