@@ -304,6 +304,89 @@ public sealed class WebRtcPublisherTests
         Assert.Empty(context.Signaling.Messages);
     }
 
+    // A viewer whose ICE agent is genuinely stuck (not just slow) keeps failing the same way
+    // no matter how many times it's restarted in place — the exact loop the 2026-08-20
+    // incident showed live, where a viewer's socket kept dropping and the publisher kept
+    // restarting ICE on the same peer connection every ~15s without ever converging, and only
+    // recovered once the viewer app was manually disconnected and reconnected. After enough
+    // consecutive restarts with no intervening `Connected`, give up on repairing the existing
+    // peer and rebuild it from scratch instead — what the manual reconnect was achieving.
+    [Fact]
+    public async Task RepeatedIceRestartsThatNeverReachConnectedRebuildThePeerFromScratch()
+    {
+        var time = new MutableTimeProvider();
+        var context = CreateContext(time);
+        await using var publisher = context.Publisher;
+        await ReadyAsync(publisher, "viewer-1");
+        context.Signaling.Messages.Clear();
+
+        for (var i = 0; i < 4; i++)
+        {
+            time.Advance(TimeSpan.FromSeconds(5));
+            await publisher.HandleAsync(new(SignalingMessageTypes.ParticipantReconnected, "session-1", From: "viewer-1"));
+        }
+
+        Assert.Equal(2, context.Factory.Peers.Count);
+        var original = context.Factory.Peers[0];
+        var rebuilt = context.Factory.Peers[1];
+        Assert.Equal(3, original.IceRestartCount); // 3 in-place restarts before giving up
+        Assert.True(original.Disposed);
+        Assert.False(rebuilt.Disposed);
+        Assert.Equal(1, rebuilt.OfferCount); // fresh offer, not a restart
+        Assert.Equal(0, rebuilt.IceRestartCount);
+    }
+
+    [Fact]
+    public async Task ReachingConnectedResetsTheConsecutiveIceRestartCount()
+    {
+        var time = new MutableTimeProvider();
+        var context = CreateContext(time);
+        await using var publisher = context.Publisher;
+        await ReadyAsync(publisher, "viewer-1");
+        var peer = context.Factory.Peers[0];
+
+        for (var i = 0; i < 2; i++)
+        {
+            time.Advance(TimeSpan.FromSeconds(5));
+            await publisher.HandleAsync(new(SignalingMessageTypes.ParticipantReconnected, "session-1", From: "viewer-1"));
+        }
+        peer.SetDiagnostics(PeerConnectionState.Connected, "relay/udp", TimeSpan.FromMilliseconds(20));
+
+        for (var i = 0; i < 3; i++)
+        {
+            time.Advance(TimeSpan.FromSeconds(5));
+            await publisher.HandleAsync(new(SignalingMessageTypes.ParticipantReconnected, "session-1", From: "viewer-1"));
+        }
+
+        // 5 restarts total, but the Connected reading in the middle reset the streak, so the
+        // peer was never rebuilt despite exceeding the raw 3-restart threshold overall.
+        Assert.Single(context.Factory.Peers);
+        Assert.Equal(5, peer.IceRestartCount);
+        Assert.False(peer.Disposed);
+    }
+
+    [Fact]
+    public async Task RebuildingAfterRepeatedIceRestartsRaisesPeerRebuildRequestedNotIceRestartRequested()
+    {
+        var time = new MutableTimeProvider();
+        var context = CreateContext(time);
+        await using var publisher = context.Publisher;
+        await ReadyAsync(publisher, "viewer-1");
+        var iceRestartRequests = new List<string>();
+        var rebuildRequests = new List<string>();
+        publisher.IceRestartRequested += iceRestartRequests.Add;
+        publisher.PeerRebuildRequested += rebuildRequests.Add;
+
+        for (var i = 0; i < 4; i++)
+        {
+            time.Advance(TimeSpan.FromSeconds(5));
+            await publisher.HandleAsync(new(SignalingMessageTypes.ParticipantReconnected, "session-1", From: "viewer-1"));
+        }
+
+        Assert.Equal(["viewer-1", "viewer-1", "viewer-1"], iceRestartRequests);
+        Assert.Equal(["viewer-1"], rebuildRequests);
+    }
+
     [Fact]
     public async Task IceRestartFailureRemovesTheViewerLikeAnOfferFailure()
     {

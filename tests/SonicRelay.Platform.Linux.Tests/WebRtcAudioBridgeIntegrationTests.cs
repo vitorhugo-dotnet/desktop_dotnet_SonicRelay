@@ -19,6 +19,7 @@ internal sealed class FakeWebRtcPublisher : IWebRtcPublisher
     public WebRtcPublisherDiagnostics Diagnostics { get; } = new(0, []);
     public event Action<WebRtcPublisherDiagnostics>? DiagnosticsChanged;
     public event Action<string>? IceRestartRequested;
+    public event Action<string>? PeerRebuildRequested;
 
     public Task HandleAsync(SignalingMessageEnvelope message, CancellationToken cancellationToken = default) => Task.CompletedTask;
 

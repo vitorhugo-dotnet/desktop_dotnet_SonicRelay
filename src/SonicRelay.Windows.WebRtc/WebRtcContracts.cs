@@ -197,6 +197,7 @@ public interface IWebRtcPublisher : ISignalingMessageHandler, IAsyncDisposable
     WebRtcPublisherDiagnostics Diagnostics { get; }
     event Action<WebRtcPublisherDiagnostics>? DiagnosticsChanged;
     event Action<string>? IceRestartRequested;
+    event Action<string>? PeerRebuildRequested;
     Task PushAudioFrameAsync(WebRtcAudioFrame frame, CancellationToken cancellationToken = default);
 }
 
