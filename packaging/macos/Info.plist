@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>SonicRelay</string>
+    <key>CFBundleDisplayName</key>
+    <string>SonicRelay Publisher</string>
+    <key>CFBundleIdentifier</key>
+    <string>dev.sonicrelay.publisher</string>
+    <key>CFBundleExecutable</key>
+    <string>SonicRelay.Windows.Desktop</string>
+    <key>CFBundleIconFile</key>
+    <string>SonicRelay</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <!-- build-app-bundle.sh substitutes the release version for both of these. -->
+    <key>CFBundleShortVersionString</key>
+    <string>__VERSION__</string>
+    <key>CFBundleVersion</key>
+    <string>__VERSION__</string>
+    <!-- ScreenCaptureKit audio capture requires macOS 13 (Ventura). -->
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <!--
+      Shown in the system's Screen Recording consent prompt. macOS has no
+      separate system-audio permission: capturing the output mix through
+      ScreenCaptureKit is gated by the Screen & System Audio Recording grant,
+      so this string is the only place the user is told why SonicRelay is
+      asking for it.
+    -->
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>SonicRelay needs Screen &amp; System Audio Recording access to capture this Mac's audio output and stream it to your paired viewers. No screen content is captured, transmitted, or stored.</string>
+    <!--
+      Not an agent: SonicRelay has a normal window and Dock presence. Kept
+      explicit so a future tray-only mode is a deliberate change rather than an
+      accident of the default.
+    -->
+    <key>LSUIElement</key>
+    <false/>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <key>NSSupportsAutomaticGraphicsSwitching</key>
+    <true/>
+</dict>
+</plist>
