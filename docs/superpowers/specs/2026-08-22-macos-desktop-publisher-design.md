@@ -9,7 +9,8 @@ Ship the SonicRelay publisher on macOS from the existing Avalonia shell, with sy
 
 ## Constraints that shaped the design
 
-1. **macOS has no loopback capture device.** There is no WASAPI-loopback equivalent, and no first-party CLI equivalent of PipeWire's `pw-record`. The supported route for reading the system output mix is ScreenCaptureKit's audio capture (macOS 13+).
+1. **macOS has no loopback capture device.** There is no WASAPI-loopback equivalent, and no first-party CLI equivalent of PipeWire's `pw-record`. The supported route for reading the system output mix is ScreenCaptureKit's audio capture (macOS 13+). Below that there is no supported API at all: Core Audio process taps are newer still (14.2+), so pre-13 capture would require a virtual audio device, which [the non-admin checklist](../../non-admin-checklist.md) rules out for a driver we ship.
+6. **The .NET 10 runtime supports macOS 14, 15, and 26 only.** This, not ScreenCaptureKit, sets the product's floor at macOS 14 — the higher of the two constraints wins.
 2. **ScreenCaptureKit is a delegate/CMSampleBuffer Objective-C API.** Reaching it from .NET means either substantial Objective-C runtime interop or a native helper.
 3. **macOS privacy enforcement is bundle-scoped.** TCC grants Screen Recording consent to a code-signed bundle identity, not to a path or a user.
 4. **Capture is system-wide.** ScreenCaptureKit taps the output mix; it cannot be pointed at a chosen output endpoint.

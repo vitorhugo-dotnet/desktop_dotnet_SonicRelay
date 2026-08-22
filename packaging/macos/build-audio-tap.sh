@@ -46,8 +46,14 @@ slices=()
 for arch in "${architectures[@]}"; do
     slice="$work_dir/sonicrelay-audio-tap.$arch"
     # -O for a release build; the helper sits on the audio path for the whole
-    # session. The deployment target must match Info.plist's
-    # LSMinimumSystemVersion: SCStream audio capture is macOS 13+.
+    # session.
+    #
+    # The deployment target is the helper's own API floor — SCStream audio
+    # capture is macOS 13+ — and is deliberately lower than the bundle's
+    # LSMinimumSystemVersion of 14.0, which the .NET 10 runtime sets. The app
+    # cannot launch below 14 either way; pinning the helper to its real API
+    # requirement keeps the two constraints separately visible instead of
+    # conflating them.
     xcrun swiftc \
         -O \
         -target "${arch}-apple-macos13.0" \

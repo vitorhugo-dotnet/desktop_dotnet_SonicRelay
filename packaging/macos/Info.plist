@@ -21,9 +21,13 @@
     <string>__VERSION__</string>
     <key>CFBundleVersion</key>
     <string>__VERSION__</string>
-    <!-- ScreenCaptureKit audio capture requires macOS 13 (Ventura). -->
+    <!--
+      The floor is set by the .NET 10 runtime, which supports macOS 14, 15 and
+      26 only — not by ScreenCaptureKit, whose audio capture would allow 13.
+      The higher of the two wins, so this is 14.0; see docs/macos-publisher.md.
+    -->
     <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
+    <string>14.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <!--

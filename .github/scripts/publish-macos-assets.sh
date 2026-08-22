@@ -26,7 +26,7 @@ retry_gh gh release download "$RELEASE_TAG" --pattern checksums-sha256.txt --dir
 ( cd "$dist_dir" && shasum -a 256 SonicRelay-MacPublisher-*.zip SonicRelay-MacPublisher-*.dmg >> checksums-sha256.txt )
 
 currentNotes=$(retry_gh gh release view "$RELEASE_TAG" --json body --jq .body)
-macosNotes=$(printf '\n\n## macOS assets\n\n- `SonicRelay-MacPublisher-osx-arm64-%s.dmg`: Apple Silicon disk image (drag SonicRelay.app to Applications).\n- `SonicRelay-MacPublisher-osx-arm64-%s.zip`: Apple Silicon app bundle archive.\n- `SonicRelay-MacPublisher-osx-x64-%s.dmg`: Intel disk image.\n- `SonicRelay-MacPublisher-osx-x64-%s.zip`: Intel app bundle archive.\n\nmacOS 13 (Ventura) or later. On first capture, SonicRelay asks for Screen & System Audio Recording permission — macOS gates system audio capture behind that grant. See `docs/macos-publisher.md` for installation, permissions, and known limitations.\n' "$RELEASE_VERSION" "$RELEASE_VERSION" "$RELEASE_VERSION" "$RELEASE_VERSION")
+macosNotes=$(printf '\n\n## macOS assets\n\n- `SonicRelay-MacPublisher-osx-arm64-%s.dmg`: Apple Silicon disk image (drag SonicRelay.app to Applications).\n- `SonicRelay-MacPublisher-osx-arm64-%s.zip`: Apple Silicon app bundle archive.\n- `SonicRelay-MacPublisher-osx-x64-%s.dmg`: Intel disk image.\n- `SonicRelay-MacPublisher-osx-x64-%s.zip`: Intel app bundle archive.\n\nmacOS 14 (Sonoma) or later. On first capture, SonicRelay asks for Screen & System Audio Recording permission — macOS gates system audio capture behind that grant. See `docs/macos-publisher.md` for installation, permissions, and known limitations.\n' "$RELEASE_VERSION" "$RELEASE_VERSION" "$RELEASE_VERSION" "$RELEASE_VERSION")
 
 retry_gh gh release edit "$RELEASE_TAG" --notes "${currentNotes}${macosNotes}"
 

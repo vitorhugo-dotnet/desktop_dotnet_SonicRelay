@@ -103,7 +103,7 @@ $requiredMacOsTopics = @(
     'Screen & System Audio Recording'
     'ScreenCaptureKit'
     'System Settings'
-    'macOS 13'
+    'macOS 14'
     'osx-arm64'
     'osx-x64'
     'notariz'

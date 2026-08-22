@@ -4,13 +4,13 @@ namespace SonicRelay.Windows.Core.Tests;
 
 /// <summary>
 /// These tests exercise <see cref="ChildProcessRunner"/> against real Unix
-/// binaries (/bin/echo, /bin/sh, /bin/sleep, /bin/true) rather than fakes, to
+/// binaries (/bin/echo, /bin/sh, /bin/sleep, /bin/cat) rather than fakes, to
 /// validate actual `Process` behavior. Those paths exist on both Linux and
 /// macOS — the two platforms whose capture adapters supervise a helper process
 /// through this runner — so each test runs for real on either and no-ops on
 /// Windows rather than failing on a missing binary.
 /// </summary>
-public sealed class LinuxProcessRunnerTests
+public sealed class ChildProcessRunnerTests
 {
     [Fact]
     public async Task RunAsyncCapturesStdoutAndExitCodeForARealProcess()
@@ -59,7 +59,10 @@ public sealed class LinuxProcessRunnerTests
         if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS()) return;
 
         var runner = new ChildProcessRunner();
-        await using var process = runner.Start("/bin/true", []);
+        // `/bin/sh -c "exit 0"` rather than /bin/true: macOS ships true at
+        // /usr/bin/true, not /bin/true, and hard-coding either path makes the
+        // test pass on one of the two platforms this runner supports.
+        await using var process = runner.Start("/bin/sh", ["-c", "exit 0"]);
 
         // Give the process time to actually exit before we subscribe, so we
         // exercise the "subscriber attaches after Exited already fired" race.

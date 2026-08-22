@@ -21,10 +21,26 @@ Apple Silicon (`osx-arm64`) is the primary target; `osx-x64` is built from the s
 | Tier | Systems |
 | --- | --- |
 | Officially supported | macOS 15 (Sequoia) on Apple Silicon |
-| Best effort | macOS 13 (Ventura) and 14 (Sonoma) on Apple Silicon; macOS 13+ on Intel |
-| Out of scope | macOS 12 (Monterey) and earlier; Mac App Store distribution; iOS/iPadOS; capturing a single application's audio; capturing a chosen output device rather than the system mix |
+| Best effort | macOS 14 (Sonoma) and macOS 26 on Apple Silicon; macOS 14+ on Intel |
+| Out of scope | macOS 13 (Ventura) and earlier; Mac App Store distribution; iOS/iPadOS; capturing a single application's audio; capturing a chosen output device rather than the system mix |
 
-macOS 13 is a hard floor: system audio capture uses ScreenCaptureKit's audio support, which does not exist before Ventura. The bundle's `LSMinimumSystemVersion` and the helper's deployment target both state 13.0, so an older system refuses to launch the app rather than failing later with no audio.
+### Why macOS 14 is a hard floor
+
+Two independent constraints apply, and the **higher** of the two decides:
+
+1. **The .NET 10 runtime supports macOS 14, 15, and 26 only.** This is the binding constraint. It is not something SonicRelay chooses or can waive — see [.NET 10 supported operating systems](https://github.com/dotnet/core/blob/main/release-notes/10.0/supported-os.md).
+2. **ScreenCaptureKit audio capture requires macOS 13+.** System audio capture uses `SCStreamConfiguration.capturesAudio`, which did not exist before Ventura.
+
+So the bundle's `LSMinimumSystemVersion` is **14.0** (constraint 1), while the native helper's own deployment target stays at 13.0 (constraint 2, its real API requirement). An older system refuses to launch the app rather than failing later with no audio.
+
+### Could macOS 13 or earlier be supported?
+
+Not without changes well outside this feature's scope, and not at all below macOS 13 for audio:
+
+- **macOS 13 (Ventura)** is blocked only by the .NET runtime, not by the capture design. Supporting it would mean targeting an older .NET whose macOS 13 support is itself ending, and would put the whole app — not just macOS — on an unsupported runtime. Not worth it for one OS version.
+- **macOS 12 and earlier** cannot capture system audio through any supported Apple API. ScreenCaptureKit has no audio before 13, and Core Audio process taps (`AudioHardwareCreateProcessTap`) are *newer* still, macOS 14.2+. The only remaining route is a virtual audio device (a HAL plug-in such as BlackHole, or one SonicRelay would ship itself).
+
+  Shipping our own driver is ruled out by [the non-admin checklist](non-admin-checklist.md), which forbids a custom audio driver, a kernel-mode component, and any admin-required or machine-wide dependency for normal usage. Supporting a *user-installed* third-party device is technically possible — it would be a separate capture backend behind the same `IAudioCaptureBackend` seam, much as PipeWire is on Linux — but it needs the user to install a driver and re-route their system output, which also means they stop hearing their own audio unless they build an aggregate device. That is a different product decision, not a version bump; raise it as its own issue if the audience needs it.
 
 ## Installing
 
