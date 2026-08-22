@@ -132,8 +132,21 @@ jobs:
           packaging/macos/build-app-bundle.sh \
             "$publishDir" "$MACOS_RUNTIME_ID" "0.0.0-smoke" "$GITHUB_SHA" "$bundleDir"
 
-          appBinary="$bundleDir/SonicRelay.app/Contents/MacOS/SonicRelay.Windows.Desktop"
-          test -x "$bundleDir/SonicRelay.app/Contents/MacOS/sonicrelay-audio-tap"
+          # Launch the app out of the published .zip rather than from a build
+          # directory: the bundle itself is assembled in a temporary staging
+          # directory that build-app-bundle.sh removes on exit, and the .zip is
+          # what users actually download — so this also proves ditto round-trips
+          # the bundle intact.
+          extractDir="$RUNNER_TEMP/macos-smoke-app"
+          rm -rf "$extractDir"
+          mkdir -p "$extractDir"
+          ditto -x -k "$bundleDir"/SonicRelay-MacPublisher-*.zip "$extractDir"
+
+          appDir="$extractDir/SonicRelay.app"
+          appBinary="$appDir/Contents/MacOS/SonicRelay.Windows.Desktop"
+          test -x "$appDir/Contents/MacOS/sonicrelay-audio-tap"
+          test -f "$appDir/Contents/Info.plist"
+          test -f "$appDir/Contents/Resources/SonicRelay.icns"
 
           "$appBinary" &
           appPid=$!
