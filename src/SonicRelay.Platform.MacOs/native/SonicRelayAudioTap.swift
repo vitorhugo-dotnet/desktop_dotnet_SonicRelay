@@ -81,10 +81,15 @@ func interleavedPcm16(from buffers: UnsafeMutableAudioBufferListPointer, isInter
         return output
     }
 
+    // The shortest plane bounds the read. ScreenCaptureKit delivers equal-length
+    // planes, but taking the longest would read past the end of a shorter one
+    // through a raw pointer if it ever did not — an out-of-bounds read is a far
+    // worse failure than dropping a few samples from a malformed buffer.
     for buffer in buffers {
         guard let raw = buffer.mData else { return nil }
         planes.append(UnsafePointer(raw.assumingMemoryBound(to: Float.self)))
-        frameCount = max(frameCount, Int(buffer.mDataByteSize) / MemoryLayout<Float>.size)
+        let bufferFrames = Int(buffer.mDataByteSize) / MemoryLayout<Float>.size
+        frameCount = planes.count == 1 ? bufferFrames : min(frameCount, bufferFrames)
     }
     guard frameCount > 0 else { return nil }
 
@@ -186,8 +191,10 @@ func runCapture() async {
     // Audio capture rides on a display stream, so a minimal video path is
     // configured deliberately: the smallest allowed frame at one frame per
     // second keeps the video encoder essentially idle while the audio taps the
-    // full system mix. `excludesCurrentProcessAudio` prevents the publisher's
-    // own output from feeding back into the capture.
+    // full system mix. `excludesCurrentProcessAudio` only excludes this helper
+    // process — SonicRelay itself runs separately and plays nothing, so there is
+    // no feedback loop to break; it is set defensively in case the helper ever
+    // gains a sound of its own.
     let configuration = SCStreamConfiguration()
     configuration.capturesAudio = true
     configuration.sampleRate = sampleRate
