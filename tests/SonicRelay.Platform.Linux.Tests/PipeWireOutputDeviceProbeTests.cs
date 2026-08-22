@@ -1,5 +1,6 @@
 using SonicRelay.Platform.Linux.Audio;
-using SonicRelay.Platform.Linux.Tests.Fakes;
+using SonicRelay.Tests.Shared.Fakes;
+using SonicRelay.Windows.Core.Processes;
 
 namespace SonicRelay.Platform.Linux.Tests;
 
@@ -25,9 +26,9 @@ public sealed class PipeWireOutputDeviceProbeTests
     [Fact]
     public void GetOutputDevicesMarksTheDefaultSink()
     {
-        var runner = new FakeLinuxProcessRunner();
-        runner.Script("pw-dump", new LinuxProcessResult(0, PwDumpJson, string.Empty));
-        runner.Script("wpctl", new LinuxProcessResult(0, DefaultInspectOutput, string.Empty));
+        var runner = new FakeChildProcessRunner();
+        runner.Script("pw-dump", new ChildProcessResult(0, PwDumpJson, string.Empty));
+        runner.Script("wpctl", new ChildProcessResult(0, DefaultInspectOutput, string.Empty));
         var probe = new PipeWireOutputDeviceProbe(runner, Paths);
 
         var devices = probe.GetOutputDevices();
@@ -41,8 +42,8 @@ public sealed class PipeWireOutputDeviceProbeTests
     [Fact]
     public void GetOutputDevicesReturnsEmptyWhenDiscoveryFails()
     {
-        var runner = new FakeLinuxProcessRunner();
-        runner.Script("pw-dump", new LinuxProcessResult(1, string.Empty, "no session"));
+        var runner = new FakeChildProcessRunner();
+        runner.Script("pw-dump", new ChildProcessResult(1, string.Empty, "no session"));
         var probe = new PipeWireOutputDeviceProbe(runner, Paths);
 
         Assert.Empty(probe.GetOutputDevices());
@@ -51,9 +52,9 @@ public sealed class PipeWireOutputDeviceProbeTests
     [Fact]
     public void GetOutputDevicesStillReturnsSinksWhenDefaultLookupFails()
     {
-        var runner = new FakeLinuxProcessRunner();
-        runner.Script("pw-dump", new LinuxProcessResult(0, PwDumpJson, string.Empty));
-        runner.Script("wpctl", new LinuxProcessResult(1, string.Empty, "no default"));
+        var runner = new FakeChildProcessRunner();
+        runner.Script("pw-dump", new ChildProcessResult(0, PwDumpJson, string.Empty));
+        runner.Script("wpctl", new ChildProcessResult(1, string.Empty, "no default"));
         var probe = new PipeWireOutputDeviceProbe(runner, Paths);
 
         var devices = probe.GetOutputDevices();

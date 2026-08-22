@@ -11,18 +11,22 @@ namespace SonicRelay.Windows.Desktop;
 
 public partial class App : Application
 {
+    /// <summary>The platforms with a real capture adapter behind <c>DesktopRuntimeFactory</c>.</summary>
+    private static bool IsSupportedPlatform =>
+        OperatingSystem.IsWindows() || OperatingSystem.IsLinux() || OperatingSystem.IsMacOS();
+
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
     public override void OnFrameworkInitializationCompleted()
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            // On Windows and Linux the shell attaches a live publisher runtime (real
-            // capture + the configured backend) and opens on the sign-in surface until
-            // a session is restored or the user signs in. Elsewhere — the headless
+            // On Windows, Linux and macOS the shell attaches a live publisher runtime
+            // (real capture + the configured backend) and opens on the sign-in surface
+            // until a session is restored or the user signs in. Elsewhere — the headless
             // render tests, or an unsupported OS — the shell opens on a representative
-            // preview so the layout and design system stay verifiable (issue #32).
-            var viewModel = OperatingSystem.IsWindows() || OperatingSystem.IsLinux()
+            // preview so the layout and design system stay verifiable (issues #32, #62).
+            var viewModel = IsSupportedPlatform
                 ? new MainWindowViewModel()
                 : MainWindowViewModel.CreatePreview();
 
@@ -41,7 +45,7 @@ public partial class App : Application
                 viewModel.LogDiagnostic("tray", "Tray integration unavailable; closing the window will exit normally instead of minimizing to tray.");
             }
 
-            if (OperatingSystem.IsWindows() || OperatingSystem.IsLinux())
+            if (IsSupportedPlatform)
                 _ = AttachConfiguredRuntimeAsync(viewModel);
         }
 
@@ -65,7 +69,8 @@ public partial class App : Application
         catch
         {
             // Backend unreachable, no stored session, or a missing platform capture
-            // dependency (e.g. PipeWire tools not installed) at startup: stay on the
+            // dependency (PipeWire tools not installed on Linux, the bundled
+            // ScreenCaptureKit helper missing on macOS) at startup: stay on the
             // sign-in surface so the user can retry once the condition is resolved.
         }
     }

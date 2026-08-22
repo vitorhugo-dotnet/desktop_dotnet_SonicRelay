@@ -1,24 +1,23 @@
-using SonicRelay.Platform.Linux.Audio;
+using SonicRelay.Windows.Core.Processes;
 
-namespace SonicRelay.Platform.Linux.Tests;
+namespace SonicRelay.Windows.Core.Tests;
 
 /// <summary>
-/// These tests exercise <see cref="LinuxProcessRunner"/> against real Unix
+/// These tests exercise <see cref="ChildProcessRunner"/> against real Unix
 /// binaries (/bin/echo, /bin/sh, /bin/sleep, /bin/true) rather than fakes, to
-/// validate actual `Process` behavior. This repo's CI currently only runs a
-/// windows-latest job (a Linux matrix is deferred to a later phase of issue
-/// #32 — see docs/superpowers/specs/2026-07-14-linux-desktop-publisher-design.md),
-/// so each test no-ops on non-Linux hosts instead of failing on a missing
-/// binary; they still run for real on Linux (this sandbox, and eventually CI).
+/// validate actual `Process` behavior. Those paths exist on both Linux and
+/// macOS — the two platforms whose capture adapters supervise a helper process
+/// through this runner — so each test runs for real on either and no-ops on
+/// Windows rather than failing on a missing binary.
 /// </summary>
 public sealed class LinuxProcessRunnerTests
 {
     [Fact]
     public async Task RunAsyncCapturesStdoutAndExitCodeForARealProcess()
     {
-        if (!OperatingSystem.IsLinux()) return;
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS()) return;
 
-        var runner = new LinuxProcessRunner();
+        var runner = new ChildProcessRunner();
         var result = await runner.RunAsync("/bin/echo", ["hello"], TimeSpan.FromSeconds(5), CancellationToken.None);
 
         Assert.Equal(0, result.ExitCode);
@@ -28,9 +27,9 @@ public sealed class LinuxProcessRunnerTests
     [Fact]
     public async Task RunAsyncReportsNonZeroExitCode()
     {
-        if (!OperatingSystem.IsLinux()) return;
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS()) return;
 
-        var runner = new LinuxProcessRunner();
+        var runner = new ChildProcessRunner();
         var result = await runner.RunAsync("/bin/sh", ["-c", "exit 3"], TimeSpan.FromSeconds(5), CancellationToken.None);
 
         Assert.Equal(3, result.ExitCode);
@@ -39,9 +38,9 @@ public sealed class LinuxProcessRunnerTests
     [Fact]
     public async Task RunAsyncKillsProcessAndThrowsOperationCanceledWhenCallerTokenIsCancelled()
     {
-        if (!OperatingSystem.IsLinux()) return;
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS()) return;
 
-        var runner = new LinuxProcessRunner();
+        var runner = new ChildProcessRunner();
         using var cts = new CancellationTokenSource();
 
         var runTask = runner.RunAsync("/bin/sleep", ["30"], TimeSpan.FromSeconds(30), cts.Token);
@@ -57,9 +56,9 @@ public sealed class LinuxProcessRunnerTests
     [Fact]
     public async Task ExitedNotifiesLateSubscriberForAlreadyExitedProcess()
     {
-        if (!OperatingSystem.IsLinux()) return;
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS()) return;
 
-        var runner = new LinuxProcessRunner();
+        var runner = new ChildProcessRunner();
         await using var process = runner.Start("/bin/true", []);
 
         // Give the process time to actually exit before we subscribe, so we
@@ -76,9 +75,9 @@ public sealed class LinuxProcessRunnerTests
     [Fact]
     public async Task RunAsyncWritesStandardInputAndClosesItBeforeWaitingForExit()
     {
-        if (!OperatingSystem.IsLinux()) return;
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS()) return;
 
-        var runner = new LinuxProcessRunner();
+        var runner = new ChildProcessRunner();
         var result = await runner.RunAsync("/bin/cat", [], TimeSpan.FromSeconds(5), CancellationToken.None, standardInput: "hello from stdin");
 
         Assert.Equal(0, result.ExitCode);
@@ -88,9 +87,9 @@ public sealed class LinuxProcessRunnerTests
     [Fact]
     public async Task RunAsyncClosesStandardInputEvenWithoutInputSoAReaderDoesNotHang()
     {
-        if (!OperatingSystem.IsLinux()) return;
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS()) return;
 
-        var runner = new LinuxProcessRunner();
+        var runner = new ChildProcessRunner();
         // /bin/cat with no input reads until stdin is closed (EOF); if RunAsync never
         // closes it, this call would hang until the 5s timeout instead of returning fast.
         var result = await runner.RunAsync("/bin/cat", [], TimeSpan.FromSeconds(5), CancellationToken.None);

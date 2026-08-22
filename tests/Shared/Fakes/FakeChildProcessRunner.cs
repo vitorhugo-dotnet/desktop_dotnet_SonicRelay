@@ -1,8 +1,8 @@
-using SonicRelay.Platform.Linux.Audio;
+using SonicRelay.Windows.Core.Processes;
 
-namespace SonicRelay.Platform.Linux.Tests.Fakes;
+namespace SonicRelay.Tests.Shared.Fakes;
 
-internal sealed class FakeLinuxProcess : ILinuxProcess
+internal sealed class FakeChildProcess : IChildProcess
 {
     private readonly MemoryStream stdout = new();
     public int StopCount { get; private set; }
@@ -34,27 +34,27 @@ internal sealed class FakeLinuxProcess : ILinuxProcess
     }
 }
 
-internal sealed class FakeLinuxProcessRunner : ILinuxProcessRunner
+internal sealed class FakeChildProcessRunner : IChildProcessRunner
 {
-    private readonly Dictionary<string, LinuxProcessResult> scriptedResults = new();
+    private readonly Dictionary<string, ChildProcessResult> scriptedResults = new();
     public List<(string Executable, IReadOnlyList<string> Arguments, string? StandardInput)> RunCalls { get; } = [];
     public List<(string Executable, IReadOnlyList<string> Arguments)> StartCalls { get; } = [];
-    public FakeLinuxProcess? LastStartedProcess { get; private set; }
+    public FakeChildProcess? LastStartedProcess { get; private set; }
 
-    public void Script(string executable, LinuxProcessResult result) => scriptedResults[executable] = result;
+    public void Script(string executable, ChildProcessResult result) => scriptedResults[executable] = result;
 
-    public Task<LinuxProcessResult> RunAsync(string executable, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken, string? standardInput = null)
+    public Task<ChildProcessResult> RunAsync(string executable, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken, string? standardInput = null)
     {
         RunCalls.Add((executable, arguments, standardInput));
         return Task.FromResult(scriptedResults.TryGetValue(executable, out var result)
             ? result
-            : new LinuxProcessResult(1, string.Empty, "not scripted"));
+            : new ChildProcessResult(1, string.Empty, "not scripted"));
     }
 
-    public ILinuxProcess Start(string executable, IReadOnlyList<string> arguments)
+    public IChildProcess Start(string executable, IReadOnlyList<string> arguments)
     {
         StartCalls.Add((executable, arguments));
-        LastStartedProcess = new FakeLinuxProcess();
+        LastStartedProcess = new FakeChildProcess();
         return LastStartedProcess;
     }
 }

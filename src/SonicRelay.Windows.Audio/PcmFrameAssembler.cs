@@ -1,13 +1,14 @@
 using System.Diagnostics;
-using SonicRelay.Windows.Audio;
 
-namespace SonicRelay.Platform.Linux.Audio;
+namespace SonicRelay.Windows.Audio;
 
 /// <summary>
-/// Buffers raw `pw-record` stdout PCM16 bytes into exact 20 ms frames,
-/// tolerating arbitrary pipe read boundaries and never emitting partial
-/// samples. `Append` is not thread-safe; the backend calls it from a single
-/// read loop (spec: docs/superpowers/specs/2026-07-14-linux-desktop-publisher-design.md).
+/// Buffers a raw PCM16 byte stream from a capture helper's stdout into exact
+/// 20 ms frames, tolerating arbitrary pipe read boundaries and never emitting
+/// partial samples. Shared by the Linux `pw-record` backend and the macOS
+/// ScreenCaptureKit tap backend. `Append` is not thread-safe; each backend
+/// calls it from a single read loop (spec:
+/// docs/superpowers/specs/2026-07-14-linux-desktop-publisher-design.md).
 /// </summary>
 public sealed class PcmFrameAssembler(int sampleRate = 48_000, int channelCount = 2, int frameDurationMs = 20)
 {

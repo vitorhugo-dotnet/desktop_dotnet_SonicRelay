@@ -1,38 +1,41 @@
 using System.Diagnostics;
 using System.Text;
 
-namespace SonicRelay.Platform.Linux.Audio;
+namespace SonicRelay.Windows.Core.Processes;
 
-public sealed record LinuxProcessResult(int ExitCode, string StandardOutput, string StandardError);
+public sealed record ChildProcessResult(int ExitCode, string StandardOutput, string StandardError);
 
-public interface ILinuxProcess : IAsyncDisposable
+public interface IChildProcess : IAsyncDisposable
 {
     Stream StandardOutput { get; }
     event Action<int>? Exited;
     Task StopAsync(TimeSpan gracePeriod, CancellationToken cancellationToken);
 }
 
-public interface ILinuxProcessRunner
+public interface IChildProcessRunner
 {
-    Task<LinuxProcessResult> RunAsync(
+    Task<ChildProcessResult> RunAsync(
         string executable,
         IReadOnlyList<string> arguments,
         TimeSpan timeout,
         CancellationToken cancellationToken,
         string? standardInput = null);
 
-    ILinuxProcess Start(string executable, IReadOnlyList<string> arguments);
+    IChildProcess Start(string executable, IReadOnlyList<string> arguments);
 }
 
 /// <summary>
-/// Launches PipeWire/WirePlumber tools directly via <see cref="ProcessStartInfo.ArgumentList"/>,
-/// never through a shell (spec: docs/superpowers/specs/2026-07-14-linux-desktop-publisher-design.md).
+/// Launches a platform helper process directly via <see cref="ProcessStartInfo.ArgumentList"/>,
+/// never through a shell. Shared by the Linux PipeWire adapter (which drives
+/// `pw-record`/`pw-dump`/`wpctl`) and the macOS adapter (which drives the bundled
+/// ScreenCaptureKit tap helper), so both get the same argument-escaping, timeout,
+/// orphan-kill, and late-exit-subscriber semantics.
 /// </summary>
-public sealed class LinuxProcessRunner : ILinuxProcessRunner
+public sealed class ChildProcessRunner : IChildProcessRunner
 {
     private const int MaxCapturedChars = 2 * 1024 * 1024;
 
-    public async Task<LinuxProcessResult> RunAsync(
+    public async Task<ChildProcessResult> RunAsync(
         string executable,
         IReadOnlyList<string> arguments,
         TimeSpan timeout,
@@ -72,11 +75,11 @@ public sealed class LinuxProcessRunner : ILinuxProcessRunner
             throw new TimeoutException($"{executable} did not exit within {timeout}.");
         }
 
-        return new LinuxProcessResult(process.ExitCode, stdout.ToString(), stderr.ToString());
+        return new ChildProcessResult(process.ExitCode, stdout.ToString(), stderr.ToString());
     }
 
-    public ILinuxProcess Start(string executable, IReadOnlyList<string> arguments) =>
-        new LinuxProcess(new Process { StartInfo = BuildStartInfo(executable, arguments), EnableRaisingEvents = true });
+    public IChildProcess Start(string executable, IReadOnlyList<string> arguments) =>
+        new ChildProcess(new Process { StartInfo = BuildStartInfo(executable, arguments), EnableRaisingEvents = true });
 
     private static ProcessStartInfo BuildStartInfo(string executable, IReadOnlyList<string> arguments)
     {
@@ -99,7 +102,7 @@ public sealed class LinuxProcessRunner : ILinuxProcessRunner
     }
 }
 
-internal sealed class LinuxProcess : ILinuxProcess
+internal sealed class ChildProcess : IChildProcess
 {
     private const int MaxCapturedStderrChars = 8192;
     private readonly Process process;
@@ -109,7 +112,7 @@ internal sealed class LinuxProcess : ILinuxProcess
     private int? exitCode;
     private bool disposed;
 
-    public LinuxProcess(Process process)
+    public ChildProcess(Process process)
     {
         this.process = process;
         this.process.Exited += OnProcessExited;
@@ -168,7 +171,7 @@ internal sealed class LinuxProcess : ILinuxProcess
         }
         catch (OperationCanceledException)
         {
-            LinuxProcessRunner.KillTree(process);
+            ChildProcessRunner.KillTree(process);
         }
     }
 
@@ -176,7 +179,7 @@ internal sealed class LinuxProcess : ILinuxProcess
     {
         if (disposed) return;
         disposed = true;
-        if (!process.HasExited) LinuxProcessRunner.KillTree(process);
+        if (!process.HasExited) ChildProcessRunner.KillTree(process);
         process.Dispose();
         await Task.CompletedTask;
     }

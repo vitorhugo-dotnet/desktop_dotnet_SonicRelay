@@ -33,6 +33,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../SonicRelay.Platform.Linux/SonicRelay.Platform.Linux.csproj" />
+    <ProjectReference Include="../SonicRelay.Platform.MacOs/SonicRelay.Platform.MacOs.csproj" />
     <ProjectReference Include="../SonicRelay.Windows.ApiClient/SonicRelay.Windows.ApiClient.csproj" />
     <ProjectReference Include="../SonicRelay.Windows.Audio/SonicRelay.Windows.Audio.csproj" />
     <ProjectReference Include="../SonicRelay.Windows.Core/SonicRelay.Windows.Core.csproj" />

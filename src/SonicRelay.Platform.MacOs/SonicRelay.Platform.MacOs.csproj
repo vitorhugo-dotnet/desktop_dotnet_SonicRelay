@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>SonicRelay.Platform.MacOs</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../SonicRelay.Windows.Audio/SonicRelay.Windows.Audio.csproj" />
+    <ProjectReference Include="../SonicRelay.Windows.Core/SonicRelay.Windows.Core.csproj" />
+  </ItemGroup>
+
+  <!--
+    The ScreenCaptureKit tap helper is native Swift and can only be compiled on a
+    macOS host (packaging/macos/build-audio-tap.sh, run by the macOS CI jobs), so
+    it is deliberately not an MSBuild input: this project must still restore and
+    build on Windows and Linux agents. The helper is located at runtime instead —
+    see AudioTapLocator.
+  -->
+  <ItemGroup>
+    <None Include="native/SonicRelayAudioTap.swift" />
+  </ItemGroup>
+
+</Project>

@@ -1,4 +1,5 @@
 using SonicRelay.Windows.Audio;
+using SonicRelay.Windows.Core.Processes;
 
 namespace SonicRelay.Platform.Linux.Audio;
 
@@ -9,7 +10,7 @@ namespace SonicRelay.Platform.Linux.Audio;
 /// calls. Desktop composition (a later phase) is responsible for calling this
 /// off the UI thread, matching how Settings already calls WASAPI enumeration.
 /// </summary>
-public sealed class PipeWireOutputDeviceProbe(ILinuxProcessRunner processRunner, PipeWireCommandPaths commandPaths) : IAudioOutputDeviceProbe
+public sealed class PipeWireOutputDeviceProbe(IChildProcessRunner processRunner, PipeWireCommandPaths commandPaths) : IAudioOutputDeviceProbe
 {
     private static readonly TimeSpan CommandTimeout = TimeSpan.FromSeconds(5);
 
