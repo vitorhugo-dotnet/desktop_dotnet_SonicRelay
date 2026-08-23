@@ -34,6 +34,15 @@ $requiredPaths = @(
     'packaging/linux/after-remove.sh'
     'packaging/linux/icons/sonicrelay.svg'
     'packaging/linux/icons/sonicrelay.png'
+    'docs/macos-publisher.md'
+    'src/SonicRelay.Platform.MacOs/SonicRelay.Platform.MacOs.csproj'
+    'src/SonicRelay.Platform.MacOs/native/SonicRelayAudioTap.swift'
+    'packaging/macos/build-app-bundle.sh'
+    'packaging/macos/build-audio-tap.sh'
+    'packaging/macos/Info.plist'
+    'packaging/macos/SonicRelay.entitlements'
+    '.github/scripts/import-macos-certificate.sh'
+    '.github/scripts/publish-macos-assets.sh'
 )
 
 $missingPaths = $requiredPaths | Where-Object {
@@ -80,6 +89,63 @@ if ($readme -notmatch '\(docs/release-smoke-test\.md\)') {
 
 if ($readme -notmatch '\(docs/linux-publisher\.md\)') {
     Write-Error 'README.md must link to docs/linux-publisher.md.'
+}
+
+if ($readme -notmatch '\(docs/macos-publisher\.md\)') {
+    Write-Error 'README.md must link to docs/macos-publisher.md.'
+}
+
+# macOS system audio capture is gated behind the Screen Recording (TCC) grant and
+# a bundled, signed helper. Users hit both on first launch, and neither is
+# guessable, so the macOS documentation must keep covering them.
+$macosPublisher = Get-Content -Raw -LiteralPath (Join-Path $root 'docs/macos-publisher.md')
+$requiredMacOsTopics = @(
+    'Screen & System Audio Recording'
+    'ScreenCaptureKit'
+    'System Settings'
+    'macOS 14'
+    'osx-arm64'
+    'osx-x64'
+    'notariz'
+    'Hardened Runtime'
+    'Developer ID'
+    'sonicrelay-audio-tap'
+    'Universal Binary'
+)
+$missingMacOsTopics = $requiredMacOsTopics | Where-Object {
+    $macosPublisher.IndexOf($_, [StringComparison]::OrdinalIgnoreCase) -lt 0
+}
+if ($missingMacOsTopics.Count -gt 0) {
+    Write-Error "macOS publisher documentation is missing required topics:`n$($missingMacOsTopics -join "`n")"
+}
+
+# The helper and its .NET supervisor agree on exit codes only by convention, and
+# nothing at build time links the Swift source to AudioTapExitCode.cs. Assert the
+# two still describe the same values, so a change to one that forgets the other
+# fails here instead of turning a denied permission into an unrecognised failure
+# at runtime.
+$audioTapSource = Get-Content -Raw -LiteralPath (Join-Path $root 'src/SonicRelay.Platform.MacOs/native/SonicRelayAudioTap.swift')
+$audioTapExitCodes = Get-Content -Raw -LiteralPath (Join-Path $root 'src/SonicRelay.Platform.MacOs/Audio/AudioTapExitCode.cs')
+$exitCodeContract = [ordered]@{
+    'usage' = 64
+    'unavailable' = 69
+    'internalFailure' = 70
+    'permissionDenied' = 77
+    'unsupportedOs' = 78
+}
+$mismatchedExitCodes = @()
+foreach ($entry in $exitCodeContract.GetEnumerator()) {
+    if ($audioTapSource -notmatch "case\s+$($entry.Key)\s*=\s*$($entry.Value)\b") {
+        $mismatchedExitCodes += "SonicRelayAudioTap.swift is missing '$($entry.Key) = $($entry.Value)'"
+    }
+}
+foreach ($value in $exitCodeContract.Values) {
+    if ($audioTapExitCodes -notmatch "=\s*$value\s*;") {
+        $mismatchedExitCodes += "AudioTapExitCode.cs is missing the value $value"
+    }
+}
+if ($mismatchedExitCodes.Count -gt 0) {
+    Write-Error "macOS audio tap exit-code contract drifted:`n$($mismatchedExitCodes -join "`n")"
 }
 
 # The WPF/WinUI SonicRelay.Windows.App project (and its PairingCard control) was
@@ -220,8 +286,14 @@ if (Test-Path -LiteralPath $workflowPath) {
         'artifact upload' = 'actions/upload-artifact@v4'
         'always upload results' = 'if:\s*always\(\)'
         'Ubuntu matrix leg' = 'ubuntu-24\.04'
+        # Anchored to the matrix line: 'macos-15' on its own also matches the
+        # packaging job's runs-on, which would let the build/test leg be dropped
+        # while this check still passed.
+        'macOS matrix leg' = '(?m)^\s*os:\s*\[[^\]]*macos-15[^\]]*\]\s*$'
         'build-and-test matrix' = '(?m)^\s*matrix:\s*$'
         'Linux startup smoke test' = 'xvfb-run'
+        'macOS startup smoke test' = 'packaging/macos/build-app-bundle\.sh'
+        'macOS packaging job' = '(?m)^\s*package-release-macos:\s*$'
     }
 
     $missingWorkflowRequirements = $requiredWorkflowPatterns.GetEnumerator() | Where-Object {
@@ -252,6 +324,16 @@ if (Test-Path -LiteralPath $workflowPath) {
 # retrying helpers rather than calling `gh` directly, so a transient blip cannot discard a
 # green build's packages.
 $publishingWorkflows = @('.github/workflows/ci.yml', '.github/workflows/release.yml')
+# The macOS jobs delegate their release step to a shared script rather than
+# inlining it in both workflows, so the same "never call gh without retries"
+# guard has to follow it there.
+$macosPublishScript = Get-Content -Raw -LiteralPath (Join-Path $root '.github/scripts/publish-macos-assets.sh')
+if ($macosPublishScript -notmatch 'source "\$repo_root/\.github/scripts/gh-retry\.sh"') {
+    Write-Error '.github/scripts/publish-macos-assets.sh must source .github/scripts/gh-retry.sh so transient 5xx responses are retried.'
+}
+if ($macosPublishScript -match '(?m)^\s*gh release ') {
+    Write-Error '.github/scripts/publish-macos-assets.sh calls gh release directly; wrap every call in retry_gh.'
+}
 foreach ($publishingWorkflowPath in $publishingWorkflows) {
     $fullPath = Join-Path $root $publishingWorkflowPath
     if (-not (Test-Path -LiteralPath $fullPath)) {
@@ -298,6 +380,11 @@ if (Test-Path -LiteralPath $releaseWorkflowPath) {
         'Linux package build script' = 'packaging/linux/build-packages\.sh'
         'fpm packaging tool' = 'gem install --no-document fpm'
         'checksums extended for Linux' = 'checksums-sha256\.txt'
+        'macOS packaging job' = '(?m)^\s*macos-package:\s*$'
+        'macOS runner for macOS packaging' = 'runs-on:\s*macos-15'
+        'macOS arm64 publish' = '(?s)dotnet publish src/SonicRelay\.Windows\.Desktop/SonicRelay\.Windows\.Desktop\.csproj.*?osx-arm64'
+        'macOS app bundle build script' = 'packaging/macos/build-app-bundle\.sh'
+        'macOS asset publishing script' = '\.github/scripts/publish-macos-assets\.sh'
     }
 
     $missingReleaseWorkflowRequirements = $requiredReleaseWorkflowPatterns.GetEnumerator() | Where-Object {

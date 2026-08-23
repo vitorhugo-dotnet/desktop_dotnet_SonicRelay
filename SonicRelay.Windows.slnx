@@ -7,6 +7,7 @@
     <Project Path="src/SonicRelay.Windows.WebRtc/SonicRelay.Windows.WebRtc.csproj" />
     <Project Path="src/SonicRelay.Windows.Presentation/SonicRelay.Windows.Presentation.csproj" />
     <Project Path="src/SonicRelay.Platform.Linux/SonicRelay.Platform.Linux.csproj" />
+    <Project Path="src/SonicRelay.Platform.MacOs/SonicRelay.Platform.MacOs.csproj" />
     <Project Path="src/SonicRelay.Windows.Desktop/SonicRelay.Windows.Desktop.csproj" />
   </Folder>
   <Folder Name="/tests/">
@@ -18,5 +19,6 @@
     <Project Path="tests/SonicRelay.Windows.Presentation.Tests/SonicRelay.Windows.Presentation.Tests.csproj" />
     <Project Path="tests/SonicRelay.Windows.Desktop.Tests/SonicRelay.Windows.Desktop.Tests.csproj" />
     <Project Path="tests/SonicRelay.Platform.Linux.Tests/SonicRelay.Platform.Linux.Tests.csproj" />
+    <Project Path="tests/SonicRelay.Platform.MacOs.Tests/SonicRelay.Platform.MacOs.Tests.csproj" />
   </Folder>
 </Solution>

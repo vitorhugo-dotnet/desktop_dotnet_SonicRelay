@@ -1,4 +1,5 @@
 using SonicRelay.Windows.Audio;
+using SonicRelay.Windows.Core.Processes;
 
 namespace SonicRelay.Platform.Linux.Audio;
 
@@ -15,7 +16,7 @@ public sealed class PipeWireProcessBackend : IAudioCaptureBackend
     private static readonly TimeSpan StopGracePeriod = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan EmptyReadPollDelay = TimeSpan.FromMilliseconds(5);
 
-    private readonly ILinuxProcessRunner processRunner;
+    private readonly IChildProcessRunner processRunner;
     private readonly PipeWireCommandPaths commandPaths;
     private readonly PipeWireSinkResolver sinkResolver;
     private readonly Func<string?> preferredSinkNodeName;
@@ -27,14 +28,14 @@ public sealed class PipeWireProcessBackend : IAudioCaptureBackend
     // launch a process the caller believes it already stopped.
     private readonly SemaphoreSlim lifecycleGate = new(1, 1);
 
-    private ILinuxProcess? process;
+    private IChildProcess? process;
     private CancellationTokenSource? readCancellation;
     private Task? readTask;
     private Action<int>? processExitedHandler;
     private bool disposed;
 
     public PipeWireProcessBackend(
-        ILinuxProcessRunner processRunner,
+        IChildProcessRunner processRunner,
         PipeWireCommandPaths commandPaths,
         PipeWireSinkResolver sinkResolver,
         Func<string?>? preferredSinkNodeName = null)
@@ -90,10 +91,10 @@ public sealed class PipeWireProcessBackend : IAudioCaptureBackend
 
             // `started` and `localReadCancellation` are fully constructed before
             // this handler is ever wired up, so it is safe even if `Exited`
-            // replays synchronously from inside the `+=` below (ILinuxProcess's
+            // replays synchronously from inside the `+=` below (IChildProcess's
             // real implementation replays immediately to a subscriber that
             // attaches after the process has already exited — see
-            // LinuxProcessRunner's late-subscription fix). It never touches the
+            // ChildProcessRunner's late-subscription fix). It never touches the
             // mutable instance fields, only this start attempt's own locals, so
             // it can't race a subsequent Start/Stop cycle either.
             void OnProcessExited(int exitCode)
@@ -133,7 +134,7 @@ public sealed class PipeWireProcessBackend : IAudioCaptureBackend
             {
                 // Clean up regardless of *which* token fired: a caller
                 // cancellation must not leave the just-launched process
-                // orphaned (the exact bug class fixed in LinuxProcessRunner).
+                // orphaned (the exact bug class fixed in ChildProcessRunner).
                 await StopInternalAsync(CancellationToken.None).ConfigureAwait(false);
                 if (cancellationToken.IsCancellationRequested) throw;
                 throw new AudioCaptureException(AudioCaptureError.PlatformFailure, "PipeWire capture did not produce audio within the startup timeout.");
@@ -152,7 +153,7 @@ public sealed class PipeWireProcessBackend : IAudioCaptureBackend
         }
     }
 
-    private async Task ReadLoopAsync(ILinuxProcess launchedProcess, PcmFrameAssembler assembler, TaskCompletionSource started, CancellationToken cancellationToken)
+    private async Task ReadLoopAsync(IChildProcess launchedProcess, PcmFrameAssembler assembler, TaskCompletionSource started, CancellationToken cancellationToken)
     {
         var buffer = new byte[4096];
         try

@@ -1,4 +1,5 @@
 using SonicRelay.Windows.Audio;
+using SonicRelay.Windows.Core.Processes;
 
 namespace SonicRelay.Platform.Linux.Audio;
 
@@ -8,7 +9,7 @@ namespace SonicRelay.Platform.Linux.Audio;
 /// target may resolve to a microphone instead of a sink/output monitor (spec:
 /// docs/superpowers/specs/2026-07-14-linux-desktop-publisher-design.md, ADR-LINUX-004).
 /// </summary>
-public sealed class PipeWireSinkResolver(ILinuxProcessRunner processRunner, PipeWireCommandPaths commandPaths)
+public sealed class PipeWireSinkResolver(IChildProcessRunner processRunner, PipeWireCommandPaths commandPaths)
 {
     private static readonly TimeSpan CommandTimeout = TimeSpan.FromSeconds(5);
 

@@ -1,6 +1,7 @@
 using SonicRelay.Platform.Linux.Audio;
-using SonicRelay.Platform.Linux.Tests.Fakes;
+using SonicRelay.Tests.Shared.Fakes;
 using SonicRelay.Windows.Audio;
+using SonicRelay.Windows.Core.Processes;
 
 namespace SonicRelay.Platform.Linux.Tests;
 
@@ -18,10 +19,10 @@ public sealed class PipeWireProcessBackendTests
      object.serial = "55"
     """;
 
-    private static (PipeWireProcessBackend Backend, FakeLinuxProcessRunner Runner) CreateBackend(Func<string?>? preferred = null)
+    private static (PipeWireProcessBackend Backend, FakeChildProcessRunner Runner) CreateBackend(Func<string?>? preferred = null)
     {
-        var runner = new FakeLinuxProcessRunner();
-        runner.Script("wpctl", new LinuxProcessResult(0, DefaultInspectOutput, string.Empty));
+        var runner = new FakeChildProcessRunner();
+        runner.Script("wpctl", new ChildProcessResult(0, DefaultInspectOutput, string.Empty));
         var resolver = new PipeWireSinkResolver(runner, Paths);
         var backend = new PipeWireProcessBackend(runner, Paths, resolver, preferred);
         return (backend, runner);

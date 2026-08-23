@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      Hardened Runtime exceptions required by a self-contained .NET application.
+      Apple's notary service rejects Hardened Runtime binaries that need these
+      without declaring them, and CoreCLR cannot start without the first two:
+
+      - allow-jit / allow-unsigned-executable-memory: the CLR JIT-compiles IL
+        into pages it allocates and marks executable at runtime.
+      - disable-library-validation: the app loads the .NET runtime's own native
+        dylibs (and Avalonia's) from inside the bundle; these are signed with
+        SonicRelay's Developer ID rather than Apple's, which library validation
+        would otherwise reject.
+
+      Deliberately NOT requested: App Sandbox, microphone, camera, or any
+      network-server entitlement. System audio capture goes through the
+      Screen Recording (TCC) grant the user gives interactively, and all
+      network traffic is outbound (API, signaling, WebRTC/STUN/TURN).
+    -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>

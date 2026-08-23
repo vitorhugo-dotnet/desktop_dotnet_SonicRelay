@@ -1,6 +1,7 @@
 using SonicRelay.Platform.Linux.Audio;
-using SonicRelay.Platform.Linux.Tests.Fakes;
+using SonicRelay.Tests.Shared.Fakes;
 using SonicRelay.Windows.Audio;
+using SonicRelay.Windows.Core.Processes;
 
 namespace SonicRelay.Platform.Linux.Tests;
 
@@ -27,8 +28,8 @@ public sealed class PipeWireSinkResolverTests
     [Fact]
     public async Task ResolveDefaultReturnsTheInspectedDefaultSink()
     {
-        var runner = new FakeLinuxProcessRunner();
-        runner.Script("wpctl", new LinuxProcessResult(0, DefaultInspectOutput, string.Empty));
+        var runner = new FakeChildProcessRunner();
+        runner.Script("wpctl", new ChildProcessResult(0, DefaultInspectOutput, string.Empty));
         var resolver = new PipeWireSinkResolver(runner, Paths);
 
         var resolved = await resolver.ResolveDefaultAsync(CancellationToken.None);
@@ -41,8 +42,8 @@ public sealed class PipeWireSinkResolverTests
     [Fact]
     public async Task ResolveDefaultThrowsNoDeviceWhenInspectFails()
     {
-        var runner = new FakeLinuxProcessRunner();
-        runner.Script("wpctl", new LinuxProcessResult(1, string.Empty, "no default sink"));
+        var runner = new FakeChildProcessRunner();
+        runner.Script("wpctl", new ChildProcessResult(1, string.Empty, "no default sink"));
         var resolver = new PipeWireSinkResolver(runner, Paths);
 
         var exception = await Assert.ThrowsAsync<AudioCaptureException>(() => resolver.ResolveDefaultAsync(CancellationToken.None));
@@ -52,8 +53,8 @@ public sealed class PipeWireSinkResolverTests
     [Fact]
     public async Task ResolveDefaultThrowsNoDeviceWhenInspectOutputIsUnparseable()
     {
-        var runner = new FakeLinuxProcessRunner();
-        runner.Script("wpctl", new LinuxProcessResult(0, "not a valid inspect tree", string.Empty));
+        var runner = new FakeChildProcessRunner();
+        runner.Script("wpctl", new ChildProcessResult(0, "not a valid inspect tree", string.Empty));
         var resolver = new PipeWireSinkResolver(runner, Paths);
 
         var exception = await Assert.ThrowsAsync<AudioCaptureException>(() => resolver.ResolveDefaultAsync(CancellationToken.None));
@@ -63,9 +64,9 @@ public sealed class PipeWireSinkResolverTests
     [Fact]
     public async Task ResolveByNodeNameInspectsTheLiveNodeWhenStillPresent()
     {
-        var runner = new FakeLinuxProcessRunner();
-        runner.Script("pw-dump", new LinuxProcessResult(0, PwDumpJson, string.Empty));
-        runner.Script("wpctl", new LinuxProcessResult(0, """
+        var runner = new FakeChildProcessRunner();
+        runner.Script("pw-dump", new ChildProcessResult(0, PwDumpJson, string.Empty));
+        runner.Script("wpctl", new ChildProcessResult(0, """
         id 60, type PipeWire:Interface:Node
          * node.name = "alsa_output.headset"
          object.serial = "60"
@@ -81,9 +82,9 @@ public sealed class PipeWireSinkResolverTests
     [Fact]
     public async Task ResolveByNodeNameFallsBackToDefaultWhenSinkIsGone()
     {
-        var runner = new FakeLinuxProcessRunner();
-        runner.Script("pw-dump", new LinuxProcessResult(0, PwDumpJson, string.Empty));
-        runner.Script("wpctl", new LinuxProcessResult(0, DefaultInspectOutput, string.Empty));
+        var runner = new FakeChildProcessRunner();
+        runner.Script("pw-dump", new ChildProcessResult(0, PwDumpJson, string.Empty));
+        runner.Script("wpctl", new ChildProcessResult(0, DefaultInspectOutput, string.Empty));
         var resolver = new PipeWireSinkResolver(runner, Paths);
 
         var resolved = await resolver.ResolveByNodeNameAsync("alsa_output.unplugged", CancellationToken.None);
@@ -94,9 +95,9 @@ public sealed class PipeWireSinkResolverTests
     [Fact]
     public async Task ResolveByNodeNameFallsBackToDefaultWhenDiscoveryFails()
     {
-        var runner = new FakeLinuxProcessRunner();
-        runner.Script("pw-dump", new LinuxProcessResult(1, string.Empty, "discovery failed"));
-        runner.Script("wpctl", new LinuxProcessResult(0, DefaultInspectOutput, string.Empty));
+        var runner = new FakeChildProcessRunner();
+        runner.Script("pw-dump", new ChildProcessResult(1, string.Empty, "discovery failed"));
+        runner.Script("wpctl", new ChildProcessResult(0, DefaultInspectOutput, string.Empty));
         var resolver = new PipeWireSinkResolver(runner, Paths);
 
         var resolved = await resolver.ResolveByNodeNameAsync("alsa_output.headset", CancellationToken.None);
@@ -107,13 +108,13 @@ public sealed class PipeWireSinkResolverTests
     [Fact]
     public async Task ResolveByNodeNameFallsBackToDefaultWhenSelectedSinkInspectFails()
     {
-        var runner = new FakeLinuxProcessRunner();
-        runner.Script("pw-dump", new LinuxProcessResult(0, PwDumpJson, string.Empty));
+        var runner = new FakeChildProcessRunner();
+        runner.Script("pw-dump", new ChildProcessResult(0, PwDumpJson, string.Empty));
         // Only one scripted result per executable is supported by the fake, so the
         // wpctl call always returns the default sink's inspect output regardless of
         // whether it targets the selected node or @DEFAULT_AUDIO_SINK@. This still
         // exercises the fallback path when the selected node's inspect call fails.
-        runner.Script("wpctl", new LinuxProcessResult(1, string.Empty, "no such node"));
+        runner.Script("wpctl", new ChildProcessResult(1, string.Empty, "no such node"));
         var resolver = new PipeWireSinkResolver(runner, Paths);
 
         var exception = await Assert.ThrowsAsync<AudioCaptureException>(

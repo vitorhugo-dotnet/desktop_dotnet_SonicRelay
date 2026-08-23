@@ -1,7 +1,6 @@
-using SonicRelay.Platform.Linux.Audio;
 using SonicRelay.Windows.Audio;
 
-namespace SonicRelay.Platform.Linux.Tests;
+namespace SonicRelay.Windows.Audio.Tests;
 
 public sealed class PcmFrameAssemblerTests
 {
