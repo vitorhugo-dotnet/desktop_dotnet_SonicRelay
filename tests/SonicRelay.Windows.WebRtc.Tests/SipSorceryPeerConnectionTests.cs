@@ -64,16 +64,73 @@ public sealed class SipSorceryPeerConnectionTests
     }
 
     [Fact]
-    public async Task Local_ice_candidates_are_emitted_with_the_standard_prefix()
+    public void A_candidate_without_the_prefix_gets_one()
     {
-        await using var peer = new SipSorceryPeerConnection("viewer-1", new RTCPeerConnection(new RTCConfiguration()));
-        var candidate = new TaskCompletionSource<WebRtcIceCandidate>(TaskCreationOptions.RunContinuationsAsynchronously);
-        peer.LocalIceCandidateReady += (c, _) => { candidate.TrySetResult(c); return Task.CompletedTask; };
+        // Browsers and flutter_webrtc expect the standard prefix that SIPSorcery omits.
+        // Getting this wrong breaks every viewer while looking healthy on this side.
+        var projected = SipSorceryPeerConnection.ToSignalingCandidate("1 1 udp 2130706431 10.0.0.1 5000 typ host", "0", 0);
 
-        await peer.CreateOfferAsync();
+        Assert.NotNull(projected);
+        Assert.Equal("candidate:1 1 udp 2130706431 10.0.0.1 5000 typ host", projected.Candidate);
+        Assert.Equal("0", projected.SdpMid);
+        Assert.Equal(0, projected.SdpMLineIndex);
+    }
 
-        var received = await candidate.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        Assert.StartsWith("candidate:", received.Candidate, StringComparison.Ordinal);
+    [Fact]
+    public void A_candidate_that_already_has_the_prefix_keeps_exactly_one()
+    {
+        var projected = SipSorceryPeerConnection.ToSignalingCandidate("candidate:1 1 udp 2130706431 10.0.0.1 5000 typ host", "0", 0);
+
+        Assert.NotNull(projected);
+        Assert.StartsWith("candidate:1", projected.Candidate, StringComparison.Ordinal);
+        Assert.DoesNotContain("candidate:candidate:", projected.Candidate, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void A_blank_candidate_is_not_forwarded(string? candidate)
+    {
+        // SIPSorcery emits a blank candidate to mark end-of-gathering. The protocol leaves
+        // that to each client and this one does not forward it.
+        Assert.Null(SipSorceryPeerConnection.ToSignalingCandidate(candidate, "0", 0));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void An_empty_mid_becomes_null_so_peers_route_by_line_index(string? sdpMid)
+    {
+        var projected = SipSorceryPeerConnection.ToSignalingCandidate("1 1 udp 1 10.0.0.1 5000 typ host", sdpMid, 3);
+
+        Assert.NotNull(projected);
+        Assert.Null(projected.SdpMid);
+        Assert.Equal(3, projected.SdpMLineIndex);
+    }
+
+    [Fact]
+    public void SipSorcery_still_strips_the_prefix_this_projection_restores()
+    {
+        // The reason ToSignalingCandidate exists at all, pinned against the dependency rather
+        // than assumed: hand SIPSorcery a candidate that *has* the standard prefix and it
+        // gives it back without one. If a future bump starts preserving it, this fails and
+        // says so, instead of the projection silently double-prefixing every candidate.
+        const string withPrefix = "candidate:1 1 udp 2130706431 10.0.0.1 5000 typ host";
+        var native = new RTCIceCandidate(new RTCIceCandidateInit
+        {
+            candidate = withPrefix,
+            sdpMid = "0",
+            sdpMLineIndex = 0,
+        });
+
+        Assert.DoesNotContain("candidate:", native.candidate, StringComparison.Ordinal);
+
+        var projected = SipSorceryPeerConnection.ToSignalingCandidate(native.candidate, native.sdpMid, native.sdpMLineIndex);
+
+        Assert.NotNull(projected);
+        Assert.StartsWith("candidate:", projected.Candidate, StringComparison.Ordinal);
+        Assert.DoesNotContain("candidate:candidate:", projected.Candidate, StringComparison.Ordinal);
     }
 
     [Fact]

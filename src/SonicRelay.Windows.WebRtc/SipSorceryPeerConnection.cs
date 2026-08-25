@@ -324,17 +324,35 @@ public sealed class SipSorceryPeerConnection : IWebRtcPeerConnection
 
     private void OnIceCandidate(RTCIceCandidate? candidate)
     {
-        if (candidate is null || string.IsNullOrWhiteSpace(candidate.candidate)) return;
+        if (candidate is null) return;
         var handlers = LocalIceCandidateReady;
         if (handlers is null) return;
-        // Browsers and flutter_webrtc expect the standard "candidate:" prefix
-        // that SIPSorcery omits from RTCIceCandidate.candidate.
-        var value = candidate.candidate.StartsWith("candidate:", StringComparison.OrdinalIgnoreCase)
-            ? candidate.candidate
-            : $"candidate:{candidate.candidate}";
-        var sdpMid = string.IsNullOrEmpty(candidate.sdpMid) ? null : candidate.sdpMid;
-        var payload = new WebRtcIceCandidate(value, sdpMid, candidate.sdpMLineIndex);
+        var payload = ToSignalingCandidate(candidate.candidate, candidate.sdpMid, candidate.sdpMLineIndex);
+        if (payload is null) return;
         _ = DispatchCandidateAsync(handlers, payload);
+    }
+
+    /// <summary>
+    /// Projects a SIPSorcery candidate onto the signaling shape, or returns null for a blank
+    /// one (SIPSorcery emits an empty candidate to mark end-of-gathering, which the protocol
+    /// leaves to each client and this one does not forward).
+    /// </summary>
+    /// <remarks>
+    /// Split out from <see cref="OnIceCandidate"/> so the wire format can be pinned down
+    /// without a live ICE agent. The prefix is the whole reason this exists: browsers and
+    /// flutter_webrtc expect the standard <c>candidate:</c> prefix that SIPSorcery omits from
+    /// <c>RTCIceCandidate.candidate</c>, and getting it wrong breaks every viewer while
+    /// looking perfectly healthy on this side.
+    /// </remarks>
+    internal static WebRtcIceCandidate? ToSignalingCandidate(string? candidate, string? sdpMid, ushort sdpMLineIndex)
+    {
+        if (string.IsNullOrWhiteSpace(candidate)) return null;
+        var value = candidate.StartsWith("candidate:", StringComparison.OrdinalIgnoreCase)
+            ? candidate
+            : $"candidate:{candidate}";
+        // An empty mid means "route by line index"; passing it through as an empty string
+        // would have peers match on a mid that does not exist.
+        return new WebRtcIceCandidate(value, string.IsNullOrEmpty(sdpMid) ? null : sdpMid, sdpMLineIndex);
     }
 
     private static async Task DispatchCandidateAsync(
