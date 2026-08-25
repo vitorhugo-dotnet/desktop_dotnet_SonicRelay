@@ -43,7 +43,13 @@ flowchart LR
     Session --> Signaling
     WebRtc --> PeerA[Viewer peer connection]
     WebRtc --> PeerB[Viewer peer connection]
+    PeerA --> Playback[Audio playback]
 ```
+
+Capture is the system output mix in every mode — SonicRelay never captures a microphone.
+Playback only exists in a two-way session, and only for peers the backend has authorized to
+publish; see [two-way audio](two-way-audio.md), including why capturing and playing on the
+same endpoint is a feedback loop.
 
 The UI will request operations through application-level orchestration added in later issues. Capability projects must not depend on the App project. Cross-cutting contracts should be introduced only when a concrete feature needs them.
 

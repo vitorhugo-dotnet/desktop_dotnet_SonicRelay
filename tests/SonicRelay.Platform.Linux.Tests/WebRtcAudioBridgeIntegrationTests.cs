@@ -21,6 +21,18 @@ internal sealed class FakeWebRtcPublisher : IWebRtcPublisher
     public event Action<WebRtcPublisherDiagnostics>? DiagnosticsChanged;
     public event Action<string>? IceRestartRequested;
     public event Action<string>? PeerRebuildRequested;
+    public event Action<ParticipantAudioState>? ParticipantAudioStateChanged;
+    public event Action<string, RemoteAudioFrame>? RemoteAudioFrameReceived;
+
+    public IReadOnlyCollection<ParticipantAudioState> Participants => [];
+
+    public bool OutgoingAudioMuted { get; private set; }
+
+    public Task SetOutgoingAudioMutedAsync(bool muted, CancellationToken cancellationToken = default)
+    {
+        OutgoingAudioMuted = muted;
+        return Task.CompletedTask;
+    }
 
     public Task HandleAsync(SignalingMessageEnvelope message, CancellationToken cancellationToken = default) => Task.CompletedTask;
 

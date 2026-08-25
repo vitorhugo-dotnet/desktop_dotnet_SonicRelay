@@ -8,6 +8,14 @@ public sealed record ChildProcessResult(int ExitCode, string StandardOutput, str
 public interface IChildProcess : IAsyncDisposable
 {
     Stream StandardOutput { get; }
+
+    /// <summary>
+    /// The process's stdin, for helpers that are fed rather than read — the PipeWire playback
+    /// process takes raw PCM this way. Closing it is how such a helper is asked to finish,
+    /// which <see cref="StopAsync"/> already does.
+    /// </summary>
+    Stream StandardInput { get; }
+
     event Action<int>? Exited;
     Task StopAsync(TimeSpan gracePeriod, CancellationToken cancellationToken);
 }
@@ -122,6 +130,8 @@ internal sealed class ChildProcess : IChildProcess
     }
 
     public Stream StandardOutput => process.StandardOutput.BaseStream;
+
+    public Stream StandardInput => process.StandardInput.BaseStream;
 
     public event Action<int>? Exited
     {

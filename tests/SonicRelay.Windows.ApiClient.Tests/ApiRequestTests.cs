@@ -39,6 +39,49 @@ public sealed class ApiRequestTests
     }
 
     [Fact]
+    public async Task DuplexSessionOperationsUseDocumentedRoutesAndBodies()
+    {
+        var requests = new List<(HttpMethod Method, string Path, string? Body)>();
+        var sessionId = Guid.Parse("00000000-0000-0000-0000-000000000003");
+        var participantId = Guid.Parse("00000000-0000-0000-0000-000000000009");
+        var created = """{"id":"00000000-0000-0000-0000-000000000003","sourceDeviceId":"00000000-0000-0000-0000-000000000002","status":"waiting","maxViewers":3,"codeExpiresAt":"2026-01-01T00:10:00Z","startedAt":null,"endedAt":null,"createdAt":"2026-01-01T00:00:00Z","code":"ABC123","mode":"duplex"}""";
+        var participants = """{"sessionId":"00000000-0000-0000-0000-000000000003","mode":"duplex","participants":[{"participantId":"00000000-0000-0000-0000-000000000009","role":"viewer","status":"connected","audioSendAllowed":true,"canSendAudio":true,"canReceiveAudio":true,"audioMuted":false,"joinedAt":"2026-01-01T00:00:00Z","leftAt":null,"isSelf":false}]}""";
+        var permission = """{"participantId":"00000000-0000-0000-0000-000000000009","role":"viewer","status":"connected","audioSendAllowed":false,"canSendAudio":false,"canReceiveAudio":true,"audioMuted":false,"joinedAt":"2026-01-01T00:00:00Z","leftAt":null,"isSelf":false}""";
+        var handler = new FakeHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            requests.Add((request.Method, path,
+                request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken)));
+            if (path.EndsWith("/audio-permission", StringComparison.Ordinal))
+                return FakeHttpMessageHandler.Json(HttpStatusCode.OK, permission);
+            return path.EndsWith("/participants", StringComparison.Ordinal)
+                ? FakeHttpMessageHandler.Json(HttpStatusCode.OK, participants)
+                : FakeHttpMessageHandler.Json(HttpStatusCode.OK, created);
+        });
+        var client = new SessionApiClient(
+            TestClient.Create(handler),
+            new SequenceAccessTokenProvider("device-access"));
+
+        var session = await client.CreateSessionAsync(new CreateSessionRequest(Mode: SessionModes.Duplex));
+        var roster = await client.GetParticipantsAsync(sessionId);
+        var revoked = await client.SetAudioPermissionAsync(sessionId, participantId, canSendAudio: false);
+
+        Assert.Equal(SessionModes.Duplex, session.Mode);
+        Assert.Equal(SessionModes.Duplex, roster.Mode);
+        var participant = Assert.Single(roster.Participants);
+        Assert.True(participant.AudioSendAllowed);
+        Assert.False(revoked.AudioSendAllowed);
+
+        // maxViewers stays null (the backend applies its own default); only `mode` is added.
+        Assert.Equal((HttpMethod.Post, "/api/sessions/", """{"maxViewers":null,"mode":"duplex"}"""), requests[0]);
+        Assert.Equal((HttpMethod.Get, $"/api/sessions/{sessionId}/participants", null), requests[1]);
+        Assert.Equal(
+            (HttpMethod.Post, $"/api/sessions/{sessionId}/participants/{participantId}/audio-permission",
+                """{"canSendAudio":false}"""),
+            requests[2]);
+    }
+
+    [Fact]
     public async Task ReplaySafeGetForcesOneTokenExchangeAndRetriesUnauthorized()
     {
         var tokens = new SequenceAccessTokenProvider("token-1", "token-2");

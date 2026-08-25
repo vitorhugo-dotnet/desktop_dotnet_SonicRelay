@@ -410,6 +410,23 @@ public sealed class PublisherWorkflowTests
                 : Task.FromException<StreamSessionResponse>(CreateException);
         }
         public Task<IReadOnlyList<ActiveSessionResponse>> GetActiveSessionsAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<ActiveSessionResponse>>([]);
+
+        public SessionParticipantsResponse Participants { get; set; } =
+            new(Guid.NewGuid(), SessionModes.Duplex, []);
+
+        public List<(Guid SessionId, Guid ParticipantId, bool CanSendAudio)> AudioPermissionCalls { get; } = [];
+
+        public Task<SessionParticipantsResponse> GetParticipantsAsync(Guid sessionId, CancellationToken cancellationToken = default) =>
+            Task.FromResult(Participants);
+
+        public Task<SessionParticipant> SetAudioPermissionAsync(Guid sessionId, Guid participantId, bool canSendAudio, CancellationToken cancellationToken = default)
+        {
+            AudioPermissionCalls.Add((sessionId, participantId, canSendAudio));
+            return Task.FromResult(new SessionParticipant(
+                participantId, "viewer", "connected", canSendAudio, canSendAudio, true, false,
+                DateTimeOffset.UtcNow, null, false));
+        }
+
         public Task<StreamSessionResponse> EndSessionAsync(Guid sessionId, CancellationToken cancellationToken = default)
         {
             if (EndException is not null) return Task.FromException<StreamSessionResponse>(EndException);

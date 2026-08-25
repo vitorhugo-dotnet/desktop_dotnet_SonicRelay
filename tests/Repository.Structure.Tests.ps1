@@ -34,6 +34,7 @@ $requiredPaths = @(
     'packaging/linux/after-remove.sh'
     'packaging/linux/icons/sonicrelay.svg'
     'packaging/linux/icons/sonicrelay.png'
+    'docs/two-way-audio.md'
     'docs/macos-publisher.md'
     'src/SonicRelay.Platform.MacOs/SonicRelay.Platform.MacOs.csproj'
     'src/SonicRelay.Platform.MacOs/native/SonicRelayAudioTap.swift'

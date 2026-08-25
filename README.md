@@ -84,6 +84,16 @@ Unexpected transport failures use a conservative 1/2/4-second reconnect sequence
 
 The WebSocket carries signaling control messages only. It does not carry audio; future audio transport belongs to one WebRTC connection per viewer. The client initiates outbound connections only, opens no local server port, changes no firewall rule, and requires no administrator privileges.
 
+## Two-way audio
+
+A session can share audio in both directions instead of one way: this machine keeps publishing
+its system/app audio and also plays back what the other authorized participants send, over the
+same WebRTC connection. **No microphone is ever used** — what SonicRelay shares is always the
+system audio mix. The Audio page opens the next session as two-way, stops or resumes what this
+device sends, and — as the session's owner — grants or revokes each participant's permission
+to send. Supported on Windows, Linux and macOS; see [two-way audio](docs/two-way-audio.md)
+for the platform matrix, the permission model, and the feedback-loop caveat.
+
 ## Planned milestones
 
 1. Repository and Windows application bootstrap.

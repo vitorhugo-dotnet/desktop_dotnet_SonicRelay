@@ -5,10 +5,15 @@ namespace SonicRelay.Tests.Shared.Fakes;
 internal sealed class FakeChildProcess : IChildProcess
 {
     private readonly MemoryStream stdout = new();
+
+    /// <summary>Everything the caller fed the process, for helpers driven through stdin.</summary>
+    public MemoryStream WrittenInput { get; } = new();
+
     public int StopCount { get; private set; }
     public bool Disposed { get; private set; }
 
     public Stream StandardOutput => stdout;
+    public Stream StandardInput => WrittenInput;
     public event Action<int>? Exited;
 
     public void Write(byte[] data)

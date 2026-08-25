@@ -23,6 +23,29 @@ public sealed class SessionApiClient(
             cancellationToken,
             replaySafe: true);
 
+    public Task<SessionParticipantsResponse> GetParticipantsAsync(
+        Guid sessionId,
+        CancellationToken cancellationToken = default) =>
+        _api.SendAsync<SessionParticipantsResponse>(
+            HttpMethod.Get,
+            $"/api/sessions/{sessionId:D}/participants",
+            null,
+            true,
+            cancellationToken,
+            replaySafe: true);
+
+    public Task<SessionParticipant> SetAudioPermissionAsync(
+        Guid sessionId,
+        Guid participantId,
+        bool canSendAudio,
+        CancellationToken cancellationToken = default) =>
+        _api.SendAsync<SessionParticipant>(
+            HttpMethod.Post,
+            $"/api/sessions/{sessionId:D}/participants/{participantId:D}/audio-permission",
+            new SetAudioPermissionRequest(canSendAudio),
+            true,
+            cancellationToken);
+
     public Task<StreamSessionResponse> EndSessionAsync(
         Guid sessionId,
         CancellationToken cancellationToken = default) =>

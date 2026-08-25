@@ -35,7 +35,12 @@ public static class DesktopRuntimeFactory
 
     [SupportedOSPlatform("windows")]
     private static PublisherRuntime CreateWindows(Uri backendBaseUrl) =>
-        PublisherRuntime.Create(backendBaseUrl, new AudioCaptureService());
+        PublisherRuntime.Create(
+            backendBaseUrl,
+            new AudioCaptureService(),
+            // Two-way audio publishes the same system-output mix a one-way session does; the
+            // render backend is what lets this device also *hear* the other participants.
+            playbackBackend: new WasapiRenderBackend());
 
     private static PublisherRuntime CreateLinux(Uri backendBaseUrl)
     {
@@ -57,7 +62,18 @@ public static class DesktopRuntimeFactory
         var backend = new PipeWireProcessBackend(processRunner, commandPaths, resolver, () => audioOutputPreference.SelectedDeviceId);
         var audioCapture = AudioCaptureService.Create(backend, probe);
 
-        return PublisherRuntime.Create(backendBaseUrl, audioCapture, audioOutputPreferenceOverride: audioOutputPreference);
+        // pw-play is located optionally (see PipeWireCommandLocator), so an install without the
+        // full PipeWire user tools keeps publishing and simply offers no two-way audio, rather
+        // than failing to launch over a feature the user may never use.
+        var playbackBackend = commandPaths.PwPlay is null
+            ? null
+            : new PipeWirePlaybackBackend(processRunner, commandPaths);
+
+        return PublisherRuntime.Create(
+            backendBaseUrl,
+            audioCapture,
+            audioOutputPreferenceOverride: audioOutputPreference,
+            playbackBackend: playbackBackend);
     }
 
     /// <summary>
@@ -67,7 +83,13 @@ public static class DesktopRuntimeFactory
     /// endpoints and the runtime keeps its default audio-output preference
     /// store (which the picker still writes, harmlessly, for the "System
     /// default" entry).
+    ///
+    /// Two-way audio is composed here too: capture is already the right thing (the
+    /// ScreenCaptureKit system-audio tap) and playback is a CoreAudio output queue, which
+    /// needs no helper binary and no TCC permission of its own — recording the screen does,
+    /// playing audio does not.
     /// </summary>
+    [SupportedOSPlatform("macos")]
     private static PublisherRuntime CreateMacOs(Uri backendBaseUrl)
     {
         // Throws an actionable AudioCaptureException when the bundled helper is
@@ -79,6 +101,9 @@ public static class DesktopRuntimeFactory
         var backend = new MacOsAudioTapBackend(processRunner, helperPath);
         var audioCapture = AudioCaptureService.Create(backend, new MacOsOutputDeviceProbe());
 
-        return PublisherRuntime.Create(backendBaseUrl, audioCapture);
+        return PublisherRuntime.Create(
+            backendBaseUrl,
+            audioCapture,
+            playbackBackend: new CoreAudioPlaybackBackend());
     }
 }
