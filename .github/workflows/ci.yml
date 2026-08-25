@@ -268,7 +268,7 @@ jobs:
             -o $publishDir
 
           @"
-          product=SonicRelay Windows Publisher
+          product=SonicRelay Desktop
           version=${{ steps.metadata.outputs.display_version }}
           commit=${{ github.sha }}
           runtime=$env:RUNTIME_ID
@@ -338,7 +338,7 @@ jobs:
             } | Set-Content -Path (Join-Path $distDir 'checksums-sha256.txt') -Encoding ASCII
 
           @"
-          # SonicRelay Windows Publisher ${{ steps.metadata.outputs.display_version }}
+          # SonicRelay Desktop ${{ steps.metadata.outputs.display_version }}
 
           Built from ``${{ github.sha }}`` for ``$env:RUNTIME_ID``.
 
@@ -441,7 +441,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tagName = '${{ steps.metadata.outputs.tag_name }}'
-          $releaseTitle = 'SonicRelay Windows Publisher ${{ steps.metadata.outputs.display_version }}'
+          $releaseTitle = 'SonicRelay Desktop ${{ steps.metadata.outputs.display_version }}'
           $notesPath = Join-Path $env:GITHUB_WORKSPACE 'artifacts/release/RELEASE-NOTES.md'
           $assetPaths = @(
             Get-ChildItem -Path 'artifacts/release' -File |

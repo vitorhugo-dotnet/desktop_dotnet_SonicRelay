@@ -111,7 +111,7 @@ function Invoke-PublishScenario {
     try {
         & $publishScript `
             -Tag 'dev-1' `
-            -Title 'SonicRelay Windows Publisher 0.0.1' `
+            -Title 'SonicRelay Desktop 0.0.1' `
             -Asset $Asset `
             -ExtraArgument @('--target', 'abc123', '--prerelease') `
             -GhCommand $fakeGhPath `

@@ -1,6 +1,6 @@
 # Non-admin release smoke test
 
-Run this checklist before approving every Windows Publisher release. All mandatory steps must pass from a clean, standard user account. A failure cannot be waived by running as administrator or by changing the machine globally.
+Run this checklist before approving every SonicRelay Desktop release. All mandatory steps must pass from a clean, standard user account. A failure cannot be waived by running as administrator or by changing the machine globally.
 
 ## Test record
 

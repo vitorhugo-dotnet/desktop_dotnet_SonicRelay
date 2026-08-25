@@ -201,9 +201,9 @@ jobs:
           $isPrerelease = '${{ steps.release.outputs.prerelease }}' -eq 'true'
 
           if (-not [string]::IsNullOrWhiteSpace($prNumber)) {
-            $title = "SonicRelay Windows Publisher $tag (alpha, PR #$prNumber)"
+            $title = "SonicRelay Desktop $tag (alpha, PR #$prNumber)"
           } else {
-            $title = "SonicRelay Windows Publisher $tag"
+            $title = "SonicRelay Desktop $tag"
           }
 
           $extraArgs = @()
