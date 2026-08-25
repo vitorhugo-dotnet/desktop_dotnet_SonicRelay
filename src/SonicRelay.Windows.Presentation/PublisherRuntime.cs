@@ -29,6 +29,11 @@ public sealed class PublisherRuntime : IAsyncDisposable
     private readonly IPeerConnectionManager peers;
     private readonly IWebRtcPublisher webRtcPublisher;
     private readonly WebRtcAudioBridge audioBridge;
+
+    /// <summary>Pumps microphone capture into WebRTC in two-way sessions. Null when unsupported.</summary>
+    private readonly WebRtcAudioBridge? microphoneBridge;
+
+    private readonly AudioPlaybackService? playback;
     private readonly DeviceIdentitySession deviceIdentitySession;
     private readonly SystemNetworkAvailability networkAvailability;
     private readonly ResourceUsageSampler resourceUsageSampler;
@@ -42,6 +47,8 @@ public sealed class PublisherRuntime : IAsyncDisposable
         IPeerConnectionManager peers,
         IWebRtcPublisher webRtcPublisher,
         WebRtcAudioBridge audioBridge,
+        WebRtcAudioBridge? microphoneBridge,
+        AudioPlaybackService? playback,
         RelayPreferenceStore relayPreference,
         AudioQualityStore audioQuality,
         IAudioCaptureService audioCapture,
@@ -57,6 +64,8 @@ public sealed class PublisherRuntime : IAsyncDisposable
         this.peers = peers;
         this.webRtcPublisher = webRtcPublisher;
         this.audioBridge = audioBridge;
+        this.microphoneBridge = microphoneBridge;
+        this.playback = playback;
         this.deviceIdentitySession = deviceIdentitySession;
         Workflow = workflow;
         BackendBaseUrl = backendBaseUrl;
@@ -85,6 +94,9 @@ public sealed class PublisherRuntime : IAsyncDisposable
     public IWebRtcPublisher WebRtcPublisher => webRtcPublisher;
     public PairingViewModel? Pairing { get; private set; }
 
+    /// <summary>Whether this platform composition can capture a microphone and play audio back.</summary>
+    public bool SupportsTwoWayAudio => microphoneBridge is not null;
+
     private IRelaySettingsApiClient? relaySettingsApi;
 
     /// <summary>Backend relay-preference sync (shared across this device's pairings).</summary>
@@ -110,7 +122,9 @@ public sealed class PublisherRuntime : IAsyncDisposable
         IDeviceCredentialStore? credentialStoreOverride = null,
         AudioOutputPreferenceStore? audioOutputPreferenceOverride = null,
         RelayPreferenceStore? relayPreferenceOverride = null,
-        IDeviceIdentityApiClient? deviceIdentityApiClientOverride = null)
+        IDeviceIdentityApiClient? deviceIdentityApiClientOverride = null,
+        IAudioCaptureService? microphoneCapture = null,
+        IAudioPlaybackBackend? playbackBackend = null)
     {
         ArgumentNullException.ThrowIfNull(backendBaseUrl);
         ArgumentNullException.ThrowIfNull(audioCapture);
@@ -159,11 +173,16 @@ public sealed class PublisherRuntime : IAsyncDisposable
             () => new RelayPreferenceSnapshot(relayPreference.RelayMode, relayPreference.CoturnUrlOverride),
             allowGoogleStunDevFallback: AllowGoogleStunDevFallback);
         var audioQuality = new AudioQualityStore();
+        // The session mode is chosen when the session is created and read here when each peer
+        // connection is built, because a connection's audio direction is fixed at construction:
+        // a `sendonly` m-line cannot later accept a viewer's microphone track.
+        var sessionMode = new SessionModeState();
         var peers = new PeerConnectionManager(
             new SipSorceryPeerConnectionFactory(
                 iceServersProvider,
                 () => relayPreference.ForceRelay,
-                () => audioQuality.CurrentProfile),
+                () => audioQuality.CurrentProfile,
+                () => sessionMode.IsDuplex ? WebRtcAudioDirection.SendRecv : WebRtcAudioDirection.SendOnly),
             new WebRtcPublisherOptions());
         var webRtcPublisher = new WebRtcPublisher(signaling, peers);
         signalingHandlers.Register(webRtcPublisher);
@@ -178,13 +197,30 @@ public sealed class PublisherRuntime : IAsyncDisposable
         // Restore the previously selected output device (null = system default).
         audio.SelectOutputDevice(audioOutput.SelectedDeviceId);
         var audioBridge = new WebRtcAudioBridge(audio, webRtcPublisher);
+
+        // Two-way audio is composed only when the platform supplied both halves: capturing
+        // without playback (or the reverse) is a half-call, and offering it would let a user
+        // start a conversation that can only ever go one way.
+        var twoWaySupported = microphoneCapture is not null && playbackBackend is not null;
+        var microphoneBridge = twoWaySupported ? new WebRtcAudioBridge(microphoneCapture!, webRtcPublisher) : null;
+        var playback = twoWaySupported ? new AudioPlaybackService(playbackBackend!) : null;
+        if (playback is not null)
+        {
+            webRtcPublisher.RemoteAudioFrameReceived += (_, frame) =>
+                playback.Play(frame.Samples, frame.SampleRate, frame.ChannelCount);
+        }
+
         var workflow = new PublisherWorkflow(
             deviceIdentitySession,
             credentialStore,
             new SessionApiClient(http, deviceIdentitySession),
             signaling,
             audio,
-            new PairingApiClient(http, deviceIdentitySession));
+            new PairingApiClient(http, deviceIdentitySession),
+            webRtcPublisher,
+            twoWaySupported ? microphoneCapture : null,
+            playback,
+            mode => sessionMode.Mode = mode);
         // Surface WebRTC recovery events in the technical console too — the on-disk
         // diagnostic log is invisible in the UI and these are exactly the lines a user
         // debugging a dropped viewer needs to see.
@@ -199,6 +235,8 @@ public sealed class PublisherRuntime : IAsyncDisposable
             peers,
             webRtcPublisher,
             audioBridge,
+            microphoneBridge,
+            playback,
             relayPreference,
             audioQuality,
             audio,
@@ -322,7 +360,12 @@ public sealed class PublisherRuntime : IAsyncDisposable
         // Stop the audio pump before the workflow disposes the capture service,
         // then tear down the WebRTC publisher (which disposes the peer manager).
         await audioBridge.DisposeAsync();
+        if (microphoneBridge is not null) await microphoneBridge.DisposeAsync();
         await Workflow.DisposeAsync();
+        // After the workflow, which stops playback while the peer connections it belongs to
+        // are still up; disposing it first would leave the receive path writing to a
+        // disposed device.
+        if (playback is not null) await playback.DisposeAsync();
         await webRtcPublisher.DisposeAsync();
         await resourceUsageSampler.DisposeAsync();
         deviceIdentitySession.Dispose();

@@ -13,7 +13,8 @@ namespace SonicRelay.Windows.WebRtc;
 public sealed class SipSorceryPeerConnectionFactory(
     IIceServersProvider iceServersProvider,
     Func<bool>? forceRelay = null,
-    Func<AudioQualityProfile>? audioProfile = null) : IWebRtcPeerConnectionFactory
+    Func<AudioQualityProfile>? audioProfile = null,
+    Func<WebRtcAudioDirection>? audioDirection = null) : IWebRtcPeerConnectionFactory
 {
     private readonly IIceServersProvider iceServersProvider =
         iceServersProvider ?? throw new ArgumentNullException(nameof(iceServersProvider));
@@ -26,6 +27,11 @@ public sealed class SipSorceryPeerConnectionFactory(
     private readonly Func<AudioQualityProfile> audioProfile =
         audioProfile ?? (() => AudioQualityProfile.Default);
 
+    // Read at creation time, from the mode of the session that is live when this viewer
+    // joins. A session's mode never changes, so every peer of one session agrees.
+    private readonly Func<WebRtcAudioDirection> audioDirection =
+        audioDirection ?? (() => WebRtcAudioDirection.SendOnly);
+
     public async Task<IWebRtcPeerConnection> CreateAsync(
         string viewerId,
         WebRtcPublisherOptions options,
@@ -36,7 +42,11 @@ public sealed class SipSorceryPeerConnectionFactory(
 
         var servers = await ResolveIceServersAsync(options, cancellationToken).ConfigureAwait(false);
         var configuration = BuildConfiguration(servers, forceRelay());
-        return new SipSorceryPeerConnection(viewerId, new RTCPeerConnection(configuration), audioProfile());
+        return new SipSorceryPeerConnection(
+            viewerId,
+            new RTCPeerConnection(configuration),
+            audioProfile(),
+            audioDirection());
     }
 
     /// <summary>

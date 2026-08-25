@@ -505,7 +505,23 @@ public sealed class WebRtcPublisherTests
             OfferCount++;
             return Task.FromResult(new WebRtcSessionDescription("offer", $"offer-{ViewerId}"));
         }
-        public Task<WebRtcSessionDescription> CreateIceRestartOfferAsync(CancellationToken cancellationToken = default)
+        public event Action<RemoteAudioFrame>? RemoteAudioFrameReceived;
+
+    public bool OutgoingAudioMuted { get; private set; }
+
+    public int RenegotiationOffers { get; private set; }
+
+    public void RaiseRemoteAudio(RemoteAudioFrame frame) => RemoteAudioFrameReceived?.Invoke(frame);
+
+    public void SetOutgoingAudioMuted(bool muted) => OutgoingAudioMuted = muted;
+
+    public Task<WebRtcSessionDescription> CreateRenegotiationOfferAsync(CancellationToken cancellationToken = default)
+    {
+        RenegotiationOffers++;
+        return Task.FromResult(new WebRtcSessionDescription("offer", $"renegotiated-{RenegotiationOffers}"));
+    }
+
+    public Task<WebRtcSessionDescription> CreateIceRestartOfferAsync(CancellationToken cancellationToken = default)
         {
             if (CreateIceRestartOfferException is not null) return Task.FromException<WebRtcSessionDescription>(CreateIceRestartOfferException);
             IceRestartCount++;

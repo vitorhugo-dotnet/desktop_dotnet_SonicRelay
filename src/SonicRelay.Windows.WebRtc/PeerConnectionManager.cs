@@ -24,6 +24,13 @@ public sealed class PeerConnectionManager : IPeerConnectionManager
 
     public event Func<string, WebRtcIceCandidate, CancellationToken, Task>? LocalIceCandidateReady;
     public event Action? DiagnosticsChanged;
+    public event Action<string, RemoteAudioFrame>? RemoteAudioFrameReceived;
+
+    /// <summary>
+    /// The mute state applied to peers registered from now on, so a viewer that joins while
+    /// this device is muted does not start hearing it.
+    /// </summary>
+    private volatile bool outgoingMuted;
 
     public async Task<ViewerPeerRegistration> RegisterViewerAsync(
         string viewerId,
@@ -49,9 +56,12 @@ public sealed class PeerConnectionManager : IPeerConnectionManager
             Func<WebRtcIceCandidate, CancellationToken, Task> candidateHandler =
                 (candidate, token) => EmitLocalCandidateAsync(viewerId, candidate, token);
             Action diagnosticsHandler = () => DiagnosticsChanged?.Invoke();
+            Action<RemoteAudioFrame> audioHandler = frame => RemoteAudioFrameReceived?.Invoke(viewerId, frame);
             connection.LocalIceCandidateReady += candidateHandler;
             connection.DiagnosticsChanged += diagnosticsHandler;
-            var managed = new ManagedPeer(new ViewerPeer(viewerId, connection), candidateHandler, diagnosticsHandler);
+            connection.RemoteAudioFrameReceived += audioHandler;
+            connection.SetOutgoingAudioMuted(outgoingMuted);
+            var managed = new ManagedPeer(new ViewerPeer(viewerId, connection), candidateHandler, diagnosticsHandler, audioHandler);
             lock (peers) peers.Add(viewerId, managed);
             DiagnosticsChanged?.Invoke();
             return new(managed.PublicPeer, true);
@@ -84,6 +94,32 @@ public sealed class PeerConnectionManager : IPeerConnectionManager
 
         static async Task<WebRtcSessionDescription?> RestartAsync(IWebRtcPeerConnection target, CancellationToken ct) =>
             await target.CreateIceRestartOfferAsync(ct);
+    }
+
+    public Task<WebRtcSessionDescription?> RequestRenegotiationAsync(
+        string viewerId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(viewerId);
+        IWebRtcPeerConnection? connection;
+        lock (peers)
+        {
+            connection = peers.TryGetValue(viewerId, out var peer) ? peer.PublicPeer.Connection : null;
+        }
+        return connection is null
+            ? Task.FromResult<WebRtcSessionDescription?>(null)
+            : RenegotiateAsync(connection, cancellationToken);
+
+        static async Task<WebRtcSessionDescription?> RenegotiateAsync(IWebRtcPeerConnection target, CancellationToken ct) =>
+            await target.CreateRenegotiationOfferAsync(ct);
+    }
+
+    public void SetOutgoingAudioMuted(bool muted)
+    {
+        outgoingMuted = muted;
+        IWebRtcPeerConnection[] snapshot;
+        lock (peers) snapshot = peers.Values.Select(peer => peer.PublicPeer.Connection).ToArray();
+        foreach (var peer in snapshot) peer.SetOutgoingAudioMuted(muted);
     }
 
     public Task AddRemoteIceCandidateAsync(
@@ -180,6 +216,7 @@ public sealed class PeerConnectionManager : IPeerConnectionManager
     {
         managed.PublicPeer.Connection.LocalIceCandidateReady -= managed.CandidateHandler;
         managed.PublicPeer.Connection.DiagnosticsChanged -= managed.DiagnosticsHandler;
+        managed.PublicPeer.Connection.RemoteAudioFrameReceived -= managed.RemoteAudioHandler;
         await managed.PublicPeer.Connection.DisposeAsync();
     }
 
@@ -194,5 +231,6 @@ public sealed class PeerConnectionManager : IPeerConnectionManager
     private sealed record ManagedPeer(
         ViewerPeer PublicPeer,
         Func<WebRtcIceCandidate, CancellationToken, Task> CandidateHandler,
-        Action DiagnosticsHandler);
+        Action DiagnosticsHandler,
+        Action<RemoteAudioFrame> RemoteAudioHandler);
 }

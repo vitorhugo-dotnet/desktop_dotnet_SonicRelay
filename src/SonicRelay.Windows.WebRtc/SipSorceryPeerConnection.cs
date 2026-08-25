@@ -1,3 +1,4 @@
+using Concentus;
 using Concentus.Structs;
 using SIPSorcery.Net;
 using SIPSorceryMedia.Abstractions;
@@ -6,11 +7,15 @@ using SonicRelay.Windows.Core.Audio;
 namespace SonicRelay.Windows.WebRtc;
 
 /// <summary>
-/// Publisher-side peer connection backed by SIPSorcery: one send-only Opus
-/// 48 kHz audio track per viewer, encoded per the selected
-/// <see cref="AudioQualityProfile"/> (channels/bitrate/frame duration). Trickle
-/// ICE — local candidates are surfaced through <see cref="LocalIceCandidateReady"/>
-/// as they gather and remote ones can be applied at any time after the offer.
+/// Publisher-side peer connection backed by SIPSorcery: one Opus 48 kHz audio
+/// track per viewer, encoded per the selected <see cref="AudioQualityProfile"/>
+/// (channels/bitrate/frame duration). Trickle ICE — local candidates are surfaced
+/// through <see cref="LocalIceCandidateReady"/> as they gather and remote ones can
+/// be applied at any time after the offer.
+///
+/// The track is send-only by default. A <see cref="WebRtcAudioDirection.SendRecv"/>
+/// connection (a `duplex` session) additionally decodes the peer's inbound Opus and
+/// raises it on <see cref="RemoteAudioFrameReceived"/> for playback.
 /// </summary>
 public sealed class SipSorceryPeerConnection : IWebRtcPeerConnection
 {
@@ -21,7 +26,16 @@ public sealed class SipSorceryPeerConnection : IWebRtcPeerConnection
     private static readonly TimeSpan PacingLatencyBudget = TimeSpan.FromMilliseconds(200);
 
     private readonly RTCPeerConnection connection;
+    private readonly WebRtcAudioDirection direction;
     private readonly OpusEncoder opusEncoder;
+
+    // Created lazily on the first inbound frame: a send-only connection never needs one, and
+    // even a duplex one only needs it once the peer actually starts transmitting.
+    private IOpusDecoder? opusDecoder;
+    private int decoderChannels;
+    private readonly object decoderLock = new();
+    private long inboundAudioFrames;
+    private volatile bool outgoingMuted;
     private readonly OpusFrameAccumulator accumulator;
     private readonly RtpPacketPacer pacer;
     private readonly AudioQualityProfile profile;
@@ -47,9 +61,11 @@ public sealed class SipSorceryPeerConnection : IWebRtcPeerConnection
     public SipSorceryPeerConnection(
         string viewerId,
         RTCPeerConnection connection,
-        AudioQualityProfile? profile = null)
+        AudioQualityProfile? profile = null,
+        WebRtcAudioDirection direction = WebRtcAudioDirection.SendOnly)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(viewerId);
+        this.direction = direction;
         ViewerId = viewerId;
         this.connection = connection ?? throw new ArgumentNullException(nameof(connection));
 
@@ -71,7 +87,14 @@ public sealed class SipSorceryPeerConnection : IWebRtcPeerConnection
             SampleRate,
             channels,
             $"useinbandfec=1;stereo={stereo};sprop-stereo={stereo};maxaveragebitrate={bitrate};maxplaybackrate=48000");
-        this.connection.addTrack(new MediaStreamTrack(opusFormat, MediaStreamStatusEnum.SendOnly));
+        // `sendrecv` from the first offer in a duplex session, even though nothing is coming
+        // back yet: this side is the only offerer, so a viewer that later turns on its
+        // microphone can only answer into an m-line that already accepts audio.
+        this.connection.addTrack(new MediaStreamTrack(
+            opusFormat,
+            direction == WebRtcAudioDirection.SendRecv
+                ? MediaStreamStatusEnum.SendRecv
+                : MediaStreamStatusEnum.SendOnly));
 
         opusEncoder = OpusEncoderFactory.Create(quality);
         // Encoded packets go through a monotonic pacer instead of straight to
@@ -88,6 +111,10 @@ public sealed class SipSorceryPeerConnection : IWebRtcPeerConnection
         this.connection.onconnectionstatechange += OnConnectionStateChanged;
         this.connection.OnReceiveReport += OnReceiveReport;
         this.connection.OnSendReport += OnSendReport;
+        if (direction == WebRtcAudioDirection.SendRecv)
+        {
+            this.connection.OnAudioFrameReceived += OnAudioFrameReceived;
+        }
     }
 
     public string ViewerId { get; }
@@ -109,10 +136,12 @@ public sealed class SipSorceryPeerConnection : IWebRtcPeerConnection
             profile.Id,
             opusEncoder.UseInbandFEC,
             profile.ExpectedPacketLossPercent),
-        reception);
+        reception,
+        Interlocked.Read(ref inboundAudioFrames));
 
     public event Func<WebRtcIceCandidate, CancellationToken, Task>? LocalIceCandidateReady;
     public event Action? DiagnosticsChanged;
+    public event Action<RemoteAudioFrame>? RemoteAudioFrameReceived;
 
     public async Task<WebRtcSessionDescription> CreateOfferAsync(CancellationToken cancellationToken = default)
     {
@@ -131,6 +160,34 @@ public sealed class SipSorceryPeerConnection : IWebRtcPeerConnection
         // track or resetting sender/receiver report correlation.
         connection.restartIce();
         return await CreateOfferAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<WebRtcSessionDescription> CreateRenegotiationOfferAsync(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        // Deliberately no restartIce(): the network path is fine here, only the media
+        // description changed. Regenerating ICE credentials would make every microphone
+        // toggle re-run connectivity checks and drop audio for the duration.
+        return await CreateOfferAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Stops feeding the encoder without touching the negotiated session. The track and its
+    /// m-line stay exactly as they were, so unmuting resumes immediately and the peer never
+    /// sees a renegotiation for something as ordinary as a mute button.
+    /// </summary>
+    public void SetOutgoingAudioMuted(bool muted)
+    {
+        if (outgoingMuted == muted) return;
+        outgoingMuted = muted;
+        if (muted)
+        {
+            // Anything already queued describes audio from before the mute; sending it after
+            // the fact would leak exactly the moment the user meant to cut.
+            accumulator.Clear();
+            pacer.Clear();
+        }
+        DiagnosticsChanged?.Invoke();
     }
 
     public Task ApplyAnswerAsync(WebRtcSessionDescription answer, CancellationToken cancellationToken = default)
@@ -174,7 +231,7 @@ public sealed class SipSorceryPeerConnection : IWebRtcPeerConnection
         await sendLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (disposed) return;
+            if (disposed || outgoingMuted) return;
             if (state != PeerConnectionState.Connected || !formatNegotiated)
             {
                 // No point queueing audio the transport cannot carry yet; stale
@@ -204,6 +261,54 @@ public sealed class SipSorceryPeerConnection : IWebRtcPeerConnection
         finally
         {
             sendLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Decodes one inbound Opus frame to PCM16 and hands it to playback. Only wired up on a
+    /// duplex connection. Decoding failures are dropped rather than propagated: a corrupt
+    /// packet is a normal event on a lossy path and must not disturb the send side.
+    /// </summary>
+    private void OnAudioFrameReceived(EncodedAudioFrame frame)
+    {
+        if (disposed) return;
+        var handler = RemoteAudioFrameReceived;
+        if (handler is null) return;
+        var encoded = frame.EncodedAudio;
+        if (encoded is null || encoded.Length == 0) return;
+        if (!string.Equals(frame.AudioFormat.FormatName, "OPUS", StringComparison.OrdinalIgnoreCase)) return;
+
+        try
+        {
+            var channels = frame.AudioFormat.ChannelCount is 1 or 2 ? frame.AudioFormat.ChannelCount : 1;
+            var decoder = ResolveDecoder(channels);
+            // 120 ms at 48 kHz is the largest frame Opus can carry, so this never truncates.
+            var pcm = new short[SampleRate / 1000 * 120 * channels];
+            int decodedPerChannel;
+            lock (decoderLock)
+            {
+                decodedPerChannel = decoder.Decode(encoded, pcm, pcm.Length / channels, false);
+            }
+            if (decodedPerChannel <= 0) return;
+            var sampleCount = decodedPerChannel * channels;
+            Interlocked.Increment(ref inboundAudioFrames);
+            handler(new RemoteAudioFrame(pcm[..sampleCount], SampleRate, channels));
+        }
+        catch
+        {
+            // A packet that will not decode is lost audio, not a broken connection.
+        }
+    }
+
+    private IOpusDecoder ResolveDecoder(int channels)
+    {
+        lock (decoderLock)
+        {
+            if (opusDecoder is not null && decoderChannels == channels) return opusDecoder;
+            opusDecoder?.Dispose();
+            opusDecoder = OpusCodecFactory.CreateDecoder(SampleRate, channels);
+            decoderChannels = channels;
+            return opusDecoder;
         }
     }
 
@@ -362,6 +467,15 @@ public sealed class SipSorceryPeerConnection : IWebRtcPeerConnection
         connection.onconnectionstatechange -= OnConnectionStateChanged;
         connection.OnReceiveReport -= OnReceiveReport;
         connection.OnSendReport -= OnSendReport;
+        if (direction == WebRtcAudioDirection.SendRecv)
+        {
+            connection.OnAudioFrameReceived -= OnAudioFrameReceived;
+        }
+        lock (decoderLock)
+        {
+            opusDecoder?.Dispose();
+            opusDecoder = null;
+        }
         // Stop paced sends before closing the transport they write to.
         await pacer.DisposeAsync().ConfigureAwait(false);
         try

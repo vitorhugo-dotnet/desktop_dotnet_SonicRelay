@@ -35,6 +35,18 @@ public sealed class WebRtcPublisher : IWebRtcPublisher
     private readonly TimeProvider timeProvider;
     private readonly Dictionary<string, DateTimeOffset> lastIceRestartAt = [];
     private readonly Dictionary<string, int> consecutiveIceRestarts = [];
+
+    /// <summary>
+    /// The last state the <em>backend</em> published for each participant, keyed by
+    /// participant id. This is the only place publish permission is read from: the API never
+    /// parses SDP, so a peer can attach an audio track it was never authorized to send, and
+    /// dropping that audio here is the only enforcement there is (backend ADR 0007).
+    /// </summary>
+    private readonly Dictionary<string, ParticipantAudioState> participants = new(StringComparer.Ordinal);
+
+    private string? selfParticipantId;
+    private bool duplexSession;
+    private bool outgoingMuted;
     private string? activeSessionId;
     private string? lastError;
     private bool disposed;
@@ -47,6 +59,7 @@ public sealed class WebRtcPublisher : IWebRtcPublisher
         peers.LocalIceCandidateReady += SendLocalIceCandidateAsync;
         peers.DiagnosticsChanged += PublishDiagnostics;
         peers.DiagnosticsChanged += ResetRecoveredViewers;
+        peers.RemoteAudioFrameReceived += OnRemoteAudioFrameReceived;
     }
 
     public WebRtcPublisherDiagnostics Diagnostics =>
@@ -61,6 +74,16 @@ public sealed class WebRtcPublisher : IWebRtcPublisher
     /// ever reach <see cref="PeerConnectionState.Connected"/>.
     /// </summary>
     public event Action<string>? PeerRebuildRequested;
+    public event Action<ParticipantAudioState>? ParticipantAudioStateChanged;
+    public event Action<string, RemoteAudioFrame>? RemoteAudioFrameReceived;
+
+    public IReadOnlyCollection<ParticipantAudioState> Participants
+    {
+        get { lock (participants) return participants.Values.ToArray(); }
+    }
+
+    /// <summary>Whether this device is currently withholding its outgoing audio.</summary>
+    public bool OutgoingAudioMuted => outgoingMuted;
 
     public async Task HandleAsync(SignalingMessageEnvelope message, CancellationToken cancellationToken = default)
     {
@@ -84,15 +107,28 @@ public sealed class WebRtcPublisher : IWebRtcPublisher
                     ValidateSession(message);
                     await peers.AddRemoteIceCandidateAsync(RequireViewerId(message), DeserializePayload<WebRtcIceCandidate>(message), cancellationToken);
                     break;
+                case SignalingMessageTypes.WebRtcRenegotiate:
+                    ValidateSession(message);
+                    await HandleRenegotiateAsync(RequireSessionId(message), RequireViewerId(message), cancellationToken);
+                    break;
+                case SignalingMessageTypes.ParticipantCapabilities:
+                case SignalingMessageTypes.ParticipantAudioStateChanged:
+                    // The backend broadcasts its own authoritative version of these to the
+                    // whole session, this device included, so they are absorbed rather than
+                    // acted on: they never address a peer and never carry a session to route to.
+                    await AbsorbParticipantStateAsync(message, cancellationToken);
+                    break;
                 case SignalingMessageTypes.SessionLeft when message.From is not null:
                     ValidateSession(message);
                     await peers.RemoveViewerAsync(message.From, cancellationToken);
                     ForgetRecoveryState(message.From);
+                    lock (participants) participants.Remove(message.From);
                     break;
                 case SignalingMessageTypes.ParticipantReconnected when message.From is not null:
                     var reconnectSessionId = RequireSessionId(message);
                     activeSessionId ??= reconnectSessionId;
                     ValidateSession(message);
+                    await AbsorbParticipantStateAsync(message, cancellationToken);
                     await ReofferToViewerAsync(reconnectSessionId, message.From, cancellationToken);
                     break;
                 case SignalingMessageTypes.SessionEnded:
@@ -100,6 +136,9 @@ public sealed class WebRtcPublisher : IWebRtcPublisher
                     await peers.RemoveAllAsync(cancellationToken);
                     activeSessionId = null;
                     lock (consecutiveIceRestarts) consecutiveIceRestarts.Clear();
+                    lock (participants) participants.Clear();
+                    selfParticipantId = null;
+                    duplexSession = false;
                     break;
                 // ParticipantDisconnected is intentionally a no-op: it just means the
                 // viewer's socket dropped within the backend's reconnect grace period.
@@ -143,10 +182,14 @@ public sealed class WebRtcPublisher : IWebRtcPublisher
             // clean `session.ended` (e.g. the viewer crashed and the server reaped the
             // session); adopt the new one instead of rejecting all its traffic forever.
             await AdoptSessionAsync(sessionId, cancellationToken);
+            // After adopting, never before: this device's own join is what establishes the
+            // session, and announcing capabilities needs a session to announce them in.
+            await AbsorbParticipantStateAsync(message, cancellationToken);
             return;
         }
         activeSessionId ??= sessionId;
         ValidateSession(message);
+        await AbsorbParticipantStateAsync(message, cancellationToken);
         // A repeated `session.joined` for a viewer we already hold is backend noise about a
         // presence we already acted on, not a request for anything, so it stays deduped.
         await OfferToViewerAsync(sessionId, message.From!, recoverKnownViewer: false, cancellationToken);
@@ -289,13 +332,135 @@ public sealed class WebRtcPublisher : IWebRtcPublisher
         }
     }
 
-    private Task SendOfferAsync(string sessionId, string viewerId, WebRtcSessionDescription offer, CancellationToken cancellationToken) =>
+    /// <summary>
+    /// Answers a peer's <c>webrtc.renegotiate</c> with a fresh offer on its existing peer
+    /// connection, so it can add or drop an audio track without the session being recreated.
+    /// A peer we hold no connection for gets a normal fresh offer instead — it is asking to
+    /// negotiate, and having nothing to renegotiate is not a reason to leave it waiting.
+    /// </summary>
+    private async Task HandleRenegotiateAsync(string sessionId, string viewerId, CancellationToken cancellationToken)
+    {
+        var offer = await peers.RequestRenegotiationAsync(viewerId, cancellationToken);
+        if (offer is null)
+        {
+            await OfferToViewerAsync(sessionId, viewerId, recoverKnownViewer: false, cancellationToken);
+            return;
+        }
+        await SendOfferAsync(sessionId, viewerId, offer, cancellationToken, renegotiation: true);
+    }
+
+    /// <summary>
+    /// Folds a server-published participant state into what this device believes, and
+    /// announces this device's own capabilities the first time it learns it is in a duplex
+    /// session. Payloads without a participant (a pre-duplex backend) are ignored.
+    /// </summary>
+    private async Task AbsorbParticipantStateAsync(SignalingMessageEnvelope message, CancellationToken cancellationToken)
+    {
+        var state = ParticipantAudioState.TryParse(message.Payload);
+        if (state is null) return;
+
+        // `from == null` is the backend describing this device to itself.
+        var isSelf = message.From is null || string.Equals(state.ParticipantId, selfParticipantId, StringComparison.Ordinal);
+        var firstSelfState = false;
+        if (isSelf)
+        {
+            firstSelfState = selfParticipantId is null;
+            selfParticipantId = state.ParticipantId;
+            duplexSession = state.IsDuplexSession;
+        }
+
+        lock (participants) participants[state.ParticipantId] = state;
+        ParticipantAudioStateChanged?.Invoke(state);
+
+        // Announce once, right after joining, as the protocol expects. Only in duplex: in a
+        // one-way session the defaults the backend already assigned are exactly right, and
+        // sending anything would be noise on a path that worked before duplex existed.
+        if (firstSelfState && duplexSession && activeSessionId is not null)
+        {
+            await DeclareCapabilitiesAsync(cancellationToken);
+        }
+    }
+
+    private Task DeclareCapabilitiesAsync(CancellationToken cancellationToken)
+    {
+        var sessionId = activeSessionId;
+        if (sessionId is null) return Task.CompletedTask;
+        return SendSelfStateAsync(
+            SignalingMessageTypes.ParticipantCapabilities,
+            new { canSendAudio = true, canReceiveAudio = true },
+            sessionId,
+            cancellationToken);
+    }
+
+    public Task SetOutgoingAudioMutedAsync(bool muted, CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        outgoingMuted = muted;
+        peers.SetOutgoingAudioMuted(muted);
+        var sessionId = activeSessionId;
+        // Mute is announced only in a duplex session. A one-way viewer has no UI for the
+        // publisher's mute state and the backend would broadcast a frame nobody reads.
+        if (sessionId is null || !duplexSession) return Task.CompletedTask;
+        return SendSelfStateAsync(
+            SignalingMessageTypes.ParticipantAudioStateChanged,
+            new { muted },
+            sessionId,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Sends a message that describes this device rather than addressing a peer. These carry
+    /// no <c>to</c>: the backend validates them, persists the result and broadcasts its own
+    /// version to the whole session.
+    /// </summary>
+    private async Task SendSelfStateAsync(string type, object payload, string sessionId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await signaling.SendAsync(
+                new SignalingMessageEnvelope(type, sessionId, To: null, JsonSerializer.SerializeToElement(payload, JsonOptions)),
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Failing to announce state must never take the session down: the backend's own
+            // broadcast is what the peers act on, and the next change re-announces.
+            lastError = exception.Message;
+            PublishDiagnostics();
+        }
+    }
+
+    /// <summary>
+    /// Drops audio from a peer the backend has not authorized to publish before it can reach
+    /// playback. A peer with no published state at all is a pre-duplex peer, whose contract
+    /// was simply "the publisher publishes" — gating that off would silence a working session.
+    /// </summary>
+    private void OnRemoteAudioFrameReceived(string viewerId, RemoteAudioFrame frame)
+    {
+        ParticipantAudioState? state;
+        lock (participants) participants.TryGetValue(viewerId, out state);
+        if (state is not null && !state.AudioSendAllowed) return;
+        RemoteAudioFrameReceived?.Invoke(viewerId, frame);
+    }
+
+    private Task SendOfferAsync(
+        string sessionId,
+        string viewerId,
+        WebRtcSessionDescription offer,
+        CancellationToken cancellationToken,
+        bool renegotiation = false) =>
         signaling.SendAsync(
             new SignalingMessageEnvelope(
                 SignalingMessageTypes.WebRtcOffer,
                 sessionId,
                 viewerId,
-                JsonSerializer.SerializeToElement(offer, JsonOptions)),
+                // The extra flag marks an offer the peer must apply to its existing connection
+                // rather than rebuild from. An ordinary offer stays byte-identical to what
+                // pre-duplex builds sent, so a viewer that ignores the flag is unaffected.
+                renegotiation
+                    ? JsonSerializer.SerializeToElement(
+                        new { type = offer.Type, sdp = offer.Sdp, renegotiation = true }, JsonOptions)
+                    : JsonSerializer.SerializeToElement(offer, JsonOptions)),
             cancellationToken);
 
     private static bool IsViewerJoin(SignalingMessageEnvelope message)
@@ -397,6 +562,7 @@ public sealed class WebRtcPublisher : IWebRtcPublisher
         peers.LocalIceCandidateReady -= SendLocalIceCandidateAsync;
         peers.DiagnosticsChanged -= PublishDiagnostics;
         peers.DiagnosticsChanged -= ResetRecoveredViewers;
+        peers.RemoteAudioFrameReceived -= OnRemoteAudioFrameReceived;
         await peers.DisposeAsync();
     }
 }

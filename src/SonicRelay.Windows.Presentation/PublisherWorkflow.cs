@@ -5,6 +5,7 @@ using SonicRelay.Windows.Audio;
 using SonicRelay.Windows.Core.Authentication;
 using SonicRelay.Windows.Core.Storage.DeviceIdentity;
 using SonicRelay.Windows.Signaling;
+using SonicRelay.Windows.WebRtc;
 
 namespace SonicRelay.Windows.Presentation;
 
@@ -16,6 +17,25 @@ public sealed class PublisherWorkflow : IAsyncDisposable
     private readonly IDeviceAccessTokenProvider deviceIdentity;
     private readonly IDeviceCredentialStore deviceCredentials;
     private readonly IPairingApiClient pairings;
+
+    /// <summary>
+    /// Capture for two-way sessions. Null on a platform with no microphone backend, which is
+    /// exactly what keeps the two-way controls off there instead of failing at the device.
+    /// </summary>
+    private readonly IAudioCaptureService? microphone;
+
+    /// <summary>Playback for audio arriving from participants. Null when unsupported.</summary>
+    private readonly AudioPlaybackService? playback;
+
+    private readonly IWebRtcPublisher? webRtc;
+
+    /// <summary>
+    /// Publishes the created session's mode to whatever needs it before the first peer exists —
+    /// the peer-connection factory decides `sendonly` vs `sendrecv` from it, and a connection's
+    /// direction cannot be changed after it is built.
+    /// </summary>
+    private readonly Action<string>? onSessionModeChanged;
+
     private readonly SemaphoreSlim operationLock = new(1, 1);
     private readonly object stateLock = new();
     private bool disposed;
@@ -26,7 +46,11 @@ public sealed class PublisherWorkflow : IAsyncDisposable
         ISessionApiClient sessions,
         ISignalingClient signaling,
         IAudioCaptureService audio,
-        IPairingApiClient pairings)
+        IPairingApiClient pairings,
+        IWebRtcPublisher? webRtc = null,
+        IAudioCaptureService? microphone = null,
+        AudioPlaybackService? playback = null,
+        Action<string>? onSessionModeChanged = null)
     {
         this.deviceIdentity = deviceIdentity ?? throw new ArgumentNullException(nameof(deviceIdentity));
         this.deviceCredentials = deviceCredentials ?? throw new ArgumentNullException(nameof(deviceCredentials));
@@ -34,6 +58,17 @@ public sealed class PublisherWorkflow : IAsyncDisposable
         this.signaling = signaling ?? throw new ArgumentNullException(nameof(signaling));
         this.audio = audio ?? throw new ArgumentNullException(nameof(audio));
         this.pairings = pairings ?? throw new ArgumentNullException(nameof(pairings));
+        this.webRtc = webRtc;
+        this.microphone = microphone;
+        this.playback = playback;
+        this.onSessionModeChanged = onSessionModeChanged;
+        if (microphone is not null)
+        {
+            microphone.StateChanged += OnAudioStateChanged;
+            microphone.LevelChanged += OnAudioLevelChanged;
+        }
+        if (playback is not null) playback.StateChanged += OnPlaybackStateChanged;
+        if (webRtc is not null) webRtc.ParticipantAudioStateChanged += OnParticipantAudioStateChanged;
         signaling.StateChanged += OnSignalingStateChanged;
         signaling.Closed += OnSignalingClosed;
         signaling.ReconnectAttempting += OnSignalingReconnectAttempting;
@@ -44,6 +79,17 @@ public sealed class PublisherWorkflow : IAsyncDisposable
 
     public PublisherSnapshot State { get; private set; }
     public event Action<PublisherSnapshot>? StateChanged;
+
+    /// <summary>Whether this build can capture a microphone at all (two-way audio needs one).</summary>
+    public bool SupportsTwoWayAudio => microphone is not null;
+
+    /// <summary>
+    /// The capture device the active session publishes from: the microphone in a two-way
+    /// session, the system output mix otherwise. A session's mode never changes, so this never
+    /// changes underneath a running capture.
+    /// </summary>
+    private IAudioCaptureService ActiveCapture =>
+        State.IsDuplexSession && microphone is not null ? microphone : audio;
 
     /// <summary>
     /// Raised for every line appended to <see cref="PublisherSnapshot.ActivityLog"/>, independent
@@ -73,15 +119,37 @@ public sealed class PublisherWorkflow : IAsyncDisposable
             }, "Publisher device identity is ready.");
         }, cancellationToken);
 
-    public Task CreateSessionAsync(CancellationToken cancellationToken = default)
+    /// <summary>
+    /// Creates a session. <paramref name="duplex"/> opens it for two-way audio, which the
+    /// backend fixes at creation and never changes; a build with no microphone refuses rather
+    /// than creating a session it could only ever listen on.
+    /// </summary>
+    public Task CreateSessionAsync(bool duplex = false, CancellationToken cancellationToken = default)
     {
         if (!State.IsAuthenticated || State.DeviceId is null)
             return SetValidationErrorAsync("Initialize this publisher device before creating a session.");
         if (State.SessionId is not null) return SetValidationErrorAsync("A publisher session is already active.");
+        if (duplex && microphone is null)
+            return SetValidationErrorAsync("This device has no microphone support, so it cannot start a two-way session.");
         return ExecuteAsync(async token =>
         {
-            var session = await sessions.CreateSessionAsync(new CreateSessionRequest(), token);
-            SetState(state => state with { SessionId = session.Id, SessionCode = session.Code, ViewerCount = 0 }, "Session created.");
+            var requestedMode = duplex ? SessionModes.Duplex : null;
+            var session = await sessions.CreateSessionAsync(new CreateSessionRequest(Mode: requestedMode), token);
+            // Trust the backend's echo over the request: it normalizes the value, and a build
+            // talking to an older backend that ignores `mode` must not think it got duplex.
+            var mode = session.Mode ?? requestedMode ?? SessionModes.Broadcast;
+            onSessionModeChanged?.Invoke(mode);
+            SetState(
+                state => state with
+                {
+                    SessionId = session.Id,
+                    SessionCode = session.Code,
+                    ViewerCount = 0,
+                    SessionMode = mode,
+                    OutgoingAudioMuted = false,
+                    Participants = [],
+                },
+                SessionModes.IsDuplex(mode) ? "Two-way session created." : "Session created.");
             try
             {
                 await signaling.ConnectAsync(session.Id.ToString("D"), token);
@@ -90,7 +158,14 @@ public sealed class PublisherWorkflow : IAsyncDisposable
             catch
             {
                 try { await sessions.EndSessionAsync(session.Id, CancellationToken.None); } catch { }
-                SetState(state => state with { SessionId = null, SessionCode = null, ViewerCount = 0 });
+                onSessionModeChanged?.Invoke(SessionModes.Broadcast);
+                SetState(state => state with
+                {
+                    SessionId = null,
+                    SessionCode = null,
+                    ViewerCount = 0,
+                    SessionMode = SessionModes.Broadcast,
+                });
                 throw;
             }
         }, cancellationToken);
@@ -121,11 +196,87 @@ public sealed class PublisherWorkflow : IAsyncDisposable
     {
         if (State.SessionId is null || State.SignalingState != SignalingConnectionState.Connected)
             return SetValidationErrorAsync("Create a session and connect signaling before starting audio.");
-        return ExecuteAsync(async token => { await audio.StartAsync(token); AddLog("Audio capture started."); }, cancellationToken);
+        return ExecuteAsync(async token =>
+        {
+            var source = ActiveCapture;
+            await source.StartAsync(token);
+            AddLog(ReferenceEquals(source, microphone)
+                ? "Microphone capture started."
+                : "Audio capture started.");
+        }, cancellationToken);
     }
 
     public Task StopAudioAsync(CancellationToken cancellationToken = default) =>
-        ExecuteAsync(async token => { await audio.StopAsync(token); AddLog("Audio capture stopped."); }, cancellationToken);
+        ExecuteAsync(async token =>
+        {
+            // Both, unconditionally: whichever is idle no-ops, and stopping only the currently
+            // active one would leave a device open if the mode changed between start and stop.
+            await audio.StopAsync(token);
+            if (microphone is not null) await microphone.StopAsync(token);
+            AddLog("Audio capture stopped.");
+        }, cancellationToken);
+
+    /// <summary>
+    /// Mutes or unmutes this device's outgoing audio. Nothing is renegotiated: the encoder
+    /// stops being fed and the backend broadcasts the new state to the session.
+    /// </summary>
+    public Task SetOutgoingAudioMutedAsync(bool muted, CancellationToken cancellationToken = default)
+    {
+        if (webRtc is null || State.SessionId is null) return Task.CompletedTask;
+        return ExecuteAsync(async token =>
+        {
+            await webRtc.SetOutgoingAudioMutedAsync(muted, token);
+            SetState(state => state with { OutgoingAudioMuted = muted }, muted ? "Microphone muted." : "Microphone unmuted.");
+        }, cancellationToken);
+    }
+
+    /// <summary>
+    /// Grants or revokes one participant's permission to publish audio. Backend-only decision:
+    /// the result arrives as a broadcast to the whole session, the affected participant
+    /// included, so nothing local has to be told about it separately.
+    /// </summary>
+    public Task SetParticipantAudioPermissionAsync(
+        Guid participantId,
+        bool canSendAudio,
+        CancellationToken cancellationToken = default)
+    {
+        if (State.SessionId is not { } sessionId)
+            return SetValidationErrorAsync("There is no active session to change audio permissions in.");
+        if (!State.IsDuplexSession)
+            return SetValidationErrorAsync("Audio permissions only apply to two-way sessions.");
+        return ExecuteAsync(async token =>
+        {
+            await sessions.SetAudioPermissionAsync(sessionId, participantId, canSendAudio, token);
+            AddLog(canSendAudio
+                ? "Granted a participant permission to talk."
+                : "Revoked a participant's permission to talk.");
+        }, cancellationToken);
+    }
+
+    /// <summary>
+    /// Re-reads the session's participants over HTTP. The WebSocket broadcasts already keep
+    /// this current; this exists for the moments there were none to hear — a signaling socket
+    /// that reconnected, or a UI opened mid-session.
+    /// </summary>
+    public Task RefreshParticipantsAsync(CancellationToken cancellationToken = default)
+    {
+        if (State.SessionId is not { } sessionId || !State.IsDuplexSession) return Task.CompletedTask;
+        return ExecuteAsync(async token =>
+        {
+            var response = await sessions.GetParticipantsAsync(sessionId, token);
+            var participants = response.Participants
+                .Select(participant => new ParticipantAudioState(
+                    participant.ParticipantId.ToString("D"),
+                    participant.Role,
+                    response.Mode,
+                    participant.AudioSendAllowed,
+                    participant.CanSendAudio,
+                    participant.CanReceiveAudio,
+                    participant.AudioMuted))
+                .ToArray();
+            SetState(state => state with { Participants = participants });
+        }, cancellationToken);
+    }
 
     public Task EndSessionAsync(CancellationToken cancellationToken = default)
     {
@@ -133,7 +284,8 @@ public sealed class PublisherWorkflow : IAsyncDisposable
         return ExecuteAsync(async token =>
         {
             var sessionId = State.SessionId.Value;
-            if (audio.State is not AudioCaptureState.Stopped) await audio.StopAsync(token);
+            await StopAllCaptureAsync(token);
+            if (playback is not null) await playback.StopAsync(token);
             await signaling.CloseAsync(token);
             try
             {
@@ -146,8 +298,28 @@ public sealed class PublisherWorkflow : IAsyncDisposable
                 // one is restarting the app.
                 AddLog($"The backend could not end the session ({exception.Message}); releasing it locally.");
             }
-            SetState(state => state with { SessionId = null, SessionCode = null, ViewerCount = 0 }, "Session ended.");
+            onSessionModeChanged?.Invoke(SessionModes.Broadcast);
+            SetState(
+                state => state with
+                {
+                    SessionId = null,
+                    SessionCode = null,
+                    ViewerCount = 0,
+                    SessionMode = SessionModes.Broadcast,
+                    OutgoingAudioMuted = false,
+                    Participants = [],
+                },
+                "Session ended.");
         }, cancellationToken);
+    }
+
+    private async Task StopAllCaptureAsync(CancellationToken cancellationToken)
+    {
+        if (audio.State is not AudioCaptureState.Stopped) await audio.StopAsync(cancellationToken);
+        if (microphone is not null && microphone.State is not AudioCaptureState.Stopped)
+        {
+            await microphone.StopAsync(cancellationToken);
+        }
     }
 
     /// <summary>
@@ -168,7 +340,8 @@ public sealed class PublisherWorkflow : IAsyncDisposable
         {
             if (State.SessionId is { } sessionId)
             {
-                if (audio.State is not AudioCaptureState.Stopped) await audio.StopAsync(token);
+                await StopAllCaptureAsync(token);
+                if (playback is not null) await playback.StopAsync(token);
                 await signaling.CloseAsync(token);
                 try { await sessions.EndSessionAsync(sessionId, token); } catch { }
             }
@@ -213,7 +386,9 @@ public sealed class PublisherWorkflow : IAsyncDisposable
                 DeviceName = null,
                 SessionId = null,
                 SessionCode = null,
-                ViewerCount = 0
+                ViewerCount = 0,
+                SessionMode = SessionModes.Broadcast,
+                Participants = [],
             }, "Device unpaired.");
         }, cancellationToken);
 
@@ -335,9 +510,27 @@ public sealed class PublisherWorkflow : IAsyncDisposable
     private void OnSignalingReconnectAttempting(int attempt) =>
         AddLog($"Signaling: reconnect attempt {attempt}.");
     private void OnAudioStateChanged(AudioCaptureState state) => SetState(
-        current => current with { AudioState = state, AudioDiagnostics = audio.Diagnostics },
+        current => current with { AudioState = state, AudioDiagnostics = ActiveCapture.Diagnostics },
         $"Audio capture: {state}.");
-    private void OnAudioLevelChanged(AudioLevelSnapshot _) => SetState(current => current with { AudioDiagnostics = audio.Diagnostics });
+    private void OnAudioLevelChanged(AudioLevelSnapshot _) =>
+        SetState(current => current with { AudioDiagnostics = ActiveCapture.Diagnostics });
+
+    private void OnPlaybackStateChanged(AudioPlaybackState state) =>
+        SetState(current => current with { PlaybackState = state }, $"Audio playback: {state}.");
+
+    /// <summary>
+    /// Folds one backend-published participant state into the snapshot. Replaces by id rather
+    /// than appending, so a permission change updates the row instead of duplicating it.
+    /// </summary>
+    private void OnParticipantAudioStateChanged(ParticipantAudioState participant) => SetState(current =>
+    {
+        var updated = current.Participants
+            .Where(existing => !string.Equals(existing.ParticipantId, participant.ParticipantId, StringComparison.Ordinal))
+            .Append(participant)
+            .OrderBy(existing => existing.ParticipantId, StringComparer.Ordinal)
+            .ToArray();
+        return current with { Participants = updated };
+    });
 
     /// <summary>Appends a line to the technical console's event log without changing state.</summary>
     public void LogActivity(string message) => AddLog(message);
@@ -382,12 +575,17 @@ public sealed class PublisherWorkflow : IAsyncDisposable
         signaling.ReconnectAttempting -= OnSignalingReconnectAttempting;
         audio.StateChanged -= OnAudioStateChanged;
         audio.LevelChanged -= OnAudioLevelChanged;
-        if (audio.State is not AudioCaptureState.Stopped)
+        if (microphone is not null)
         {
-            try { await audio.StopAsync(); } catch { }
+            microphone.StateChanged -= OnAudioStateChanged;
+            microphone.LevelChanged -= OnAudioLevelChanged;
         }
+        if (playback is not null) playback.StateChanged -= OnPlaybackStateChanged;
+        if (webRtc is not null) webRtc.ParticipantAudioStateChanged -= OnParticipantAudioStateChanged;
+        try { await StopAllCaptureAsync(CancellationToken.None); } catch { }
         try { await signaling.CloseAsync(); } catch { }
         await audio.DisposeAsync();
+        if (microphone is not null) await microphone.DisposeAsync();
         await signaling.DisposeAsync();
         operationLock.Dispose();
     }

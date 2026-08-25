@@ -24,7 +24,14 @@ public sealed class PathExecutableLocator : IExecutableLocator
     }
 }
 
-public sealed record PipeWireCommandPaths(string PwDump, string PwRecord, string Wpctl, string? SecretTool);
+public sealed record PipeWireCommandPaths(
+    string PwDump,
+    string PwRecord,
+    string Wpctl,
+    string? SecretTool,
+    /// Optional: only two-way sessions need to play audio back, so a machine without it can
+    /// still publish and the duplex controls simply report playback unavailable.
+    string? PwPlay = null);
 
 /// <summary>
 /// Resolves the PipeWire/WirePlumber CLI tools the Linux adapter shells out to.
@@ -45,7 +52,10 @@ public sealed class PipeWireCommandLocator
         var pwRecord = locator.Locate("pw-record") ?? throw Missing("pw-record");
         var wpctl = locator.Locate("wpctl") ?? throw Missing("wpctl");
         var secretTool = locator.Locate("secret-tool");
-        return new PipeWireCommandPaths(pwDump, pwRecord, wpctl, secretTool);
+        // `pw-play` ships in the same package as `pw-record`, but it is resolved optionally so
+        // an install that somehow lacks it still publishes instead of failing to launch.
+        var pwPlay = locator.Locate("pw-play") ?? locator.Locate("pw-cat");
+        return new PipeWireCommandPaths(pwDump, pwRecord, wpctl, secretTool, pwPlay);
     }
 
     private static AudioCaptureException Missing(string tool) => new(

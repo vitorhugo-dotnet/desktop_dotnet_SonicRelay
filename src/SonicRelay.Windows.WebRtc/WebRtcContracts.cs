@@ -14,6 +14,30 @@ public enum PeerConnectionState
 
 public sealed record WebRtcSessionDescription(string Type, string Sdp);
 
+/// <summary>
+/// Which way audio flows on a peer connection. Decided by the session mode at creation time
+/// and fixed for that connection's life, because the m-line it produces is what a peer can
+/// (or cannot) attach its own track to later.
+/// </summary>
+public enum WebRtcAudioDirection
+{
+    /// <summary>One-way: the publisher transmits and the viewer only receives.</summary>
+    SendOnly,
+
+    /// <summary>
+    /// Two-way (`duplex`). The audio m-line is offered <c>sendrecv</c> from the very first
+    /// offer even when neither side is transmitting yet: this side is the only offerer in
+    /// the protocol, so a viewer that later turns on its microphone has no way to add an
+    /// m-line of its own — it can only answer into one that already exists.
+    /// </summary>
+    SendRecv
+}
+
+/// <summary>
+/// Decoded PCM16 audio received from a peer, ready for playback. Interleaved when stereo.
+/// </summary>
+public sealed record RemoteAudioFrame(short[] Samples, int SampleRate, int ChannelCount);
+
 public sealed record WebRtcIceCandidate(string Candidate, string? SdpMid = null, int? SdpMLineIndex = null);
 
 public sealed class WebRtcAudioFrame
@@ -131,7 +155,9 @@ public sealed record PeerConnectionDiagnostics(
     string? SelectedCandidatePair = null,
     TimeSpan? EstimatedRoundTripTime = null,
     AudioSendDiagnostics? AudioSend = null,
-    AudioReceptionDiagnostics? AudioReceive = null);
+    AudioReceptionDiagnostics? AudioReceive = null,
+    // How many audio frames this peer has sent us; only ever non-zero in a duplex session.
+    long InboundAudioFrames = 0);
 
 public sealed record WebRtcPublisherDiagnostics(
     int ViewerConnectionCount,
@@ -158,9 +184,26 @@ public interface IWebRtcPeerConnection : IAsyncDisposable
     /// </summary>
     Task<WebRtcSessionDescription> CreateIceRestartOfferAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Produces a fresh offer on the existing connection <em>without</em> restarting ICE, so a
+    /// peer can add or drop an audio track mid-session. Unlike
+    /// <see cref="CreateIceRestartOfferAsync"/> this keeps the ICE credentials — the network
+    /// path is fine, only the media description changed.
+    /// </summary>
+    Task<WebRtcSessionDescription> CreateRenegotiationOfferAsync(CancellationToken cancellationToken = default);
+
     Task ApplyAnswerAsync(WebRtcSessionDescription answer, CancellationToken cancellationToken = default);
     Task AddRemoteIceCandidateAsync(WebRtcIceCandidate candidate, CancellationToken cancellationToken = default);
     Task SendAudioFrameAsync(WebRtcAudioFrame frame, CancellationToken cancellationToken = default);
+
+    /// <summary>Decoded audio arriving from the peer. Never raised on a send-only connection.</summary>
+    event Action<RemoteAudioFrame>? RemoteAudioFrameReceived;
+
+    /// <summary>
+    /// Stops (or resumes) transmitting on this connection. Muting drops frames at the encoder
+    /// instead of renegotiating, so the negotiated m-line survives and unmuting is instant.
+    /// </summary>
+    void SetOutgoingAudioMuted(bool muted);
 }
 
 public interface IWebRtcPeerConnectionFactory
@@ -184,6 +227,18 @@ public interface IPeerConnectionManager : IAsyncDisposable
     /// </summary>
     Task<WebRtcSessionDescription?> RequestIceRestartAsync(string viewerId, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Requests a renegotiation offer from the existing peer connection for
+    /// <paramref name="viewerId"/>, or returns <c>null</c> if no peer is registered for it.
+    /// </summary>
+    Task<WebRtcSessionDescription?> RequestRenegotiationAsync(string viewerId, CancellationToken cancellationToken = default);
+
+    /// <summary>Decoded audio arriving from a peer, tagged with the peer that sent it.</summary>
+    event Action<string, RemoteAudioFrame>? RemoteAudioFrameReceived;
+
+    /// <summary>Mutes or unmutes outgoing audio on every registered peer.</summary>
+    void SetOutgoingAudioMuted(bool muted);
+
     Task ApplyAnswerAsync(string viewerId, WebRtcSessionDescription answer, CancellationToken cancellationToken = default);
     Task AddRemoteIceCandidateAsync(string viewerId, WebRtcIceCandidate candidate, CancellationToken cancellationToken = default);
     Task PushAudioFrameAsync(WebRtcAudioFrame frame, CancellationToken cancellationToken = default);
@@ -198,7 +253,27 @@ public interface IWebRtcPublisher : ISignalingMessageHandler, IAsyncDisposable
     event Action<WebRtcPublisherDiagnostics>? DiagnosticsChanged;
     event Action<string>? IceRestartRequested;
     event Action<string>? PeerRebuildRequested;
+
+    /// <summary>
+    /// Raised with the backend's authoritative state for a participant whenever it changes,
+    /// this device's own included. The UI reads publish permission from here, never from what
+    /// a peer claims about itself.
+    /// </summary>
+    event Action<ParticipantAudioState>? ParticipantAudioStateChanged;
+
+    /// <summary>
+    /// Decoded audio from a participant the backend has authorized to publish. Audio from an
+    /// unauthorized peer is dropped before this and never reaches playback.
+    /// </summary>
+    event Action<string, RemoteAudioFrame>? RemoteAudioFrameReceived;
+
+    /// <summary>The latest server-published state of every participant seen in this session.</summary>
+    IReadOnlyCollection<ParticipantAudioState> Participants { get; }
+
     Task PushAudioFrameAsync(WebRtcAudioFrame frame, CancellationToken cancellationToken = default);
+
+    /// <summary>Mutes or unmutes this device's outgoing audio and announces it to the session.</summary>
+    Task SetOutgoingAudioMutedAsync(bool muted, CancellationToken cancellationToken = default);
 }
 
 public sealed class WebRtcPublisherException(string message, Exception? innerException = null)

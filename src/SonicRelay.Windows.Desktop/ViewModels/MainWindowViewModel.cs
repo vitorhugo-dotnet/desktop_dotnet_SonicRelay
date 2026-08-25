@@ -41,7 +41,9 @@ public sealed class MainWindowViewModel : ViewModelBase
         selectedNavigation = Navigation.Single(item => item.Key == PageKey.Pairing);
         ApplyShellGate();
 
-        CreateSessionCommand = new RelayCommand(() => Run(w => w.CreateSessionAsync()), () => ShellCommandAvailability.CreateSession(snapshot, HasWorkflow));
+        CreateSessionCommand = new RelayCommand(
+            () => Run(w => w.CreateSessionAsync(Audio.StartNextSessionAsTwoWay)),
+            () => ShellCommandAvailability.CreateSession(snapshot, HasWorkflow));
         StartAudioCommand = new RelayCommand(() => Run(w => w.StartAudioAsync()), () => ShellCommandAvailability.StartAudio(snapshot, HasWorkflow));
         StopAudioCommand = new RelayCommand(() => Run(w => w.StopAudioAsync()), () => ShellCommandAvailability.StopAudio(snapshot, HasWorkflow));
         EndSessionCommand = new RelayCommand(() => Run(w => w.EndSessionAsync()), () => ShellCommandAvailability.EndSession(snapshot, HasWorkflow));
@@ -262,7 +264,7 @@ public sealed class MainWindowViewModel : ViewModelBase
                 ChangeBackendUrlAsync, next.RelaySettingsApi);
         Audio = next is null
             ? new AudioPageViewModel()
-            : new AudioPageViewModel(next.AudioCapture, next.AudioOutput);
+            : new AudioPageViewModel(next.AudioCapture, next.AudioOutput, next.Workflow);
         RaisePropertyChanged(nameof(Settings));
         RaisePropertyChanged(nameof(Audio));
 
@@ -279,6 +281,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private void Apply(PublisherSnapshot? state, WebRtcPublisherDiagnostics? diagnostics, bool forceRelay)
     {
         Shell.Update(state, diagnostics, forceRelay);
+        Audio.Update(state);
         Settings.UpdateAuthentication(state?.HasDeviceIdentity ?? false);
         HasDeviceIdentity = state?.HasDeviceIdentity ?? false;
         // The runtime only creates its PairingViewModel once device-identity bootstrap
