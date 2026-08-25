@@ -72,6 +72,8 @@ This is not a mistake in the prompt. macOS has no separate "record system audio"
 
 SonicRelay deliberately requests **no** microphone permission, no camera permission, no accessibility permission, no full disk access, and no App Sandbox entitlements. All network traffic is outbound (API, signaling, WebRTC/STUN/TURN).
 
+Two-way audio changes none of that. Playing what other participants send uses a CoreAudio output queue, which needs no TCC consent — recording the screen does, playing audio does not — so a two-way session asks for exactly the same permission a one-way one does. See [two-way audio](two-way-audio.md).
+
 ## How capture works
 
 macOS capture is a small native helper, `sonicrelay-audio-tap`, that lives inside the app bundle at `SonicRelay.app/Contents/MacOS/`. It is written in Swift against ScreenCaptureKit and streams raw PCM16 stereo 48 kHz on its stdout; the .NET side supervises exactly one helper per capture session and feeds those frames into the same Opus/WebRTC pipeline every platform uses.

@@ -91,8 +91,8 @@ its system/app audio and also plays back what the other authorized participants 
 same WebRTC connection. **No microphone is ever used** — what SonicRelay shares is always the
 system audio mix. The Audio page opens the next session as two-way, stops or resumes what this
 device sends, and — as the session's owner — grants or revokes each participant's permission
-to send. Supported on Windows and Linux; see [two-way audio](docs/two-way-audio.md) for the
-platform matrix, the permission model, and the feedback-loop caveat.
+to send. Supported on Windows, Linux and macOS; see [two-way audio](docs/two-way-audio.md)
+for the platform matrix, the permission model, and the feedback-loop caveat.
 
 ## Planned milestones
 

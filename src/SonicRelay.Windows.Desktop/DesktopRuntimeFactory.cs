@@ -84,12 +84,12 @@ public static class DesktopRuntimeFactory
     /// store (which the picker still writes, harmlessly, for the "System
     /// default" entry).
     ///
-    /// Two-way audio is not composed here: macOS has no playback backend in this repository
-    /// yet, so the runtime reports two-way audio unsupported and the controls stay off rather
-    /// than offering a session this build could only half hold up. Capture is already the
-    /// right thing (the ScreenCaptureKit system-audio tap); only playback is missing, and
-    /// adding a CoreAudio output helper is its own change.
+    /// Two-way audio is composed here too: capture is already the right thing (the
+    /// ScreenCaptureKit system-audio tap) and playback is a CoreAudio output queue, which
+    /// needs no helper binary and no TCC permission of its own — recording the screen does,
+    /// playing audio does not.
     /// </summary>
+    [SupportedOSPlatform("macos")]
     private static PublisherRuntime CreateMacOs(Uri backendBaseUrl)
     {
         // Throws an actionable AudioCaptureException when the bundled helper is
@@ -101,6 +101,9 @@ public static class DesktopRuntimeFactory
         var backend = new MacOsAudioTapBackend(processRunner, helperPath);
         var audioCapture = AudioCaptureService.Create(backend, new MacOsOutputDeviceProbe());
 
-        return PublisherRuntime.Create(backendBaseUrl, audioCapture);
+        return PublisherRuntime.Create(
+            backendBaseUrl,
+            audioCapture,
+            playbackBackend: new CoreAudioPlaybackBackend());
     }
 }

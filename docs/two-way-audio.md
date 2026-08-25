@@ -63,16 +63,23 @@ existed, whose contract was simply "the publisher publishes", so its audio is pl
 
 | Platform | Capture (send) | Playback (receive) | Two-way |
 | --- | --- | --- | --- |
-| Windows | WASAPI loopback | `WasapiRenderBackend` | yes |
+| Windows | WASAPI loopback | `WasapiRenderBackend` (WASAPI shared mode) | yes |
 | Linux | PipeWire sink monitor | `PipeWirePlaybackBackend` (`pw-play` over stdin) | yes |
-| macOS | ScreenCaptureKit tap | not implemented | no |
+| macOS | ScreenCaptureKit tap | `CoreAudioPlaybackBackend` (AudioQueue) | yes |
 
 On Linux `pw-play` is located optionally, so an install without the full PipeWire user tools
 keeps publishing and simply offers no two-way audio.
 
-macOS captures fine already; only playback is missing, and it is deliberately absent rather
-than stubbed. `PublisherRuntime.SupportsTwoWayAudio` reports false there and the controls stay
-off. Adding a CoreAudio output helper is its own change.
+macOS playback is a CoreAudio output AudioQueue reached by direct interop, not a native
+helper: AudioQueue is a plain C API, unlike the Objective-C-only ScreenCaptureKit that forces
+the capture side through a compiled Swift binary. So the app bundle carries nothing extra for
+playback, and it needs no permission of its own — recording the screen requires TCC consent,
+playing audio does not, so a Mac gets two-way audio with the permissions it already had.
+
+All three backends share `PcmPlaybackBuffer`, which is where the two rules that matter live: a
+write never blocks (it runs on the WebRTC receive path, where blocking would stall the peer
+connection), and when the device falls behind it discards the *oldest* audio, because a gap is
+recoverable where accumulating delay is not.
 
 ## What is not here
 

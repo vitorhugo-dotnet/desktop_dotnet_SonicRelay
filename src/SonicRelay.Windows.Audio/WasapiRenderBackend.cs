@@ -23,16 +23,12 @@ public sealed class WasapiRenderBackend : IAudioPlaybackBackend
 
     private readonly Func<string?> preferredDeviceId;
     private readonly object writeLock = new();
-    private readonly Queue<float[]> pending = new();
     private CancellationTokenSource? renderCancellation;
     private Task? renderTask;
     private PcmStreamConverter? converter;
+    private PcmPlaybackBuffer? buffer;
     private int deviceChannels;
     private int deviceSampleRate;
-    private int pendingSamples;
-    private int maxPendingSamples;
-    private float[]? partial;
-    private int partialOffset;
 
     public WasapiRenderBackend(Func<string?>? preferredDeviceId = null)
     {
@@ -78,10 +74,8 @@ public sealed class WasapiRenderBackend : IAudioPlaybackBackend
         Device = null;
         lock (writeLock)
         {
-            pending.Clear();
-            pendingSamples = 0;
-            partial = null;
-            partialOffset = 0;
+            buffer?.Clear();
+            buffer = null;
             converter = null;
         }
     }
@@ -89,20 +83,19 @@ public sealed class WasapiRenderBackend : IAudioPlaybackBackend
     public void Write(ReadOnlySpan<short> samples)
     {
         if (samples.IsEmpty) return;
+        PcmStreamConverter? target;
+        PcmPlaybackBuffer? sink;
         lock (writeLock)
         {
-            var target = converter;
-            if (target is null) return;
-            var converted = target.Convert(samples);
-            if (converted.Length == 0) return;
-            pending.Enqueue(converted);
-            pendingSamples += converted.Length;
-            // Drop from the front: the newest audio is the one the listener is waiting on.
-            while (pendingSamples > maxPendingSamples && pending.Count > 1)
-            {
-                pendingSamples -= pending.Dequeue().Length;
-            }
+            target = converter;
+            sink = buffer;
         }
+        if (target is null || sink is null) return;
+        // Converted once here, on the receive path, so the render thread only ever copies.
+        float[] converted;
+        lock (writeLock) converted = target.Convert(samples);
+        if (converted.Length == 0) return;
+        sink.Write(MemoryMarshal.AsBytes(converted.AsSpan()));
     }
 
     public async ValueTask DisposeAsync() => await StopAsync(CancellationToken.None).ConfigureAwait(false);
@@ -135,11 +128,8 @@ public sealed class WasapiRenderBackend : IAudioPlaybackBackend
             lock (writeLock)
             {
                 converter = new PcmStreamConverter(sourceRate, sourceChannels, deviceSampleRate, deviceChannels);
-                maxPendingSamples = (int)(LatencyBudget.TotalSeconds * deviceSampleRate) * deviceChannels;
-                pending.Clear();
-                pendingSamples = 0;
-                partial = null;
-                partialOffset = 0;
+                buffer = new PcmPlaybackBuffer(PcmPlaybackBuffer.CapacityFor(
+                    LatencyBudget, deviceSampleRate, deviceChannels, sizeof(float)));
             }
 
             CheckHResult(client.Initialize(0, 0, 10_000_000, 0, mixFormatPointer, IntPtr.Zero),
@@ -187,35 +177,13 @@ public sealed class WasapiRenderBackend : IAudioPlaybackBackend
     private void WriteFrames(IAudioRenderClient renderClient, uint frames, WaveFormatEx format)
     {
         if (frames == 0) return;
-        CheckHResult(renderClient.GetBuffer(frames, out var buffer), "Windows could not acquire the playback buffer.");
+        CheckHResult(renderClient.GetBuffer(frames, out var destination), "Windows could not acquire the playback buffer.");
         var sampleCount = checked((int)frames * format.Channels);
-        var written = 0;
         var block = new float[sampleCount];
-        lock (writeLock)
-        {
-            while (written < sampleCount)
-            {
-                if (partial is null)
-                {
-                    if (pending.Count == 0) break;
-                    partial = pending.Dequeue();
-                    pendingSamples -= partial.Length;
-                    partialOffset = 0;
-                }
-                var take = Math.Min(sampleCount - written, partial.Length - partialOffset);
-                partial.AsSpan(partialOffset, take).CopyTo(block.AsSpan(written, take));
-                written += take;
-                partialOffset += take;
-                if (partialOffset >= partial.Length)
-                {
-                    partial = null;
-                    partialOffset = 0;
-                }
-            }
-        }
-        // Anything not filled stays zero: silence is the only honest thing to play when the
-        // remote side has not sent audio for this slice.
-        Marshal.Copy(block, 0, buffer, sampleCount);
+        // Fill zero-fills whatever the peer has not sent, which is the only honest thing to
+        // play for that slice.
+        buffer?.Fill(MemoryMarshal.AsBytes(block.AsSpan()));
+        Marshal.Copy(block, 0, destination, sampleCount);
         // AUDCLNT_BUFFERFLAGS_SILENT is deliberately not used even for an all-silent block:
         // the buffer is already zeroed and the flag would only save a copy.
         CheckHResult(renderClient.ReleaseBuffer(frames, 0), "Windows could not release the playback buffer.");
