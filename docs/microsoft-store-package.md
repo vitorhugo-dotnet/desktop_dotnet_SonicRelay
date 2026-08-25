@@ -49,20 +49,44 @@ MSIX), so the Store never offers the package to a device family it cannot run on
 values reserved for SonicRelay in the Partner Center **exactly**, or the *Packages* page
 rejects the upload. Find them under **App management → Product identity**.
 
-`packaging/windows/msix/store-identity.json` currently holds **placeholders**, so the package
-builds and can be sideloaded before an account exists. A build that still uses them prints a
-warning. Replace them one of two ways:
+Four values make up the Store identity, and each one maps to exactly one manifest field:
 
-1. **In the repository** — edit `store-identity.json` and drop `"isPlaceholder": true`.
-2. **In CI, without a commit** — set the repository variables `MSIX_IDENTITY_NAME`,
-   `MSIX_PUBLISHER`, `MSIX_PUBLISHER_DISPLAY_NAME` and `MSIX_DISPLAY_NAME`
-   (*Settings → Secrets and variables → Actions → Variables*). Both workflows pass them to
-   the packaging job as environment variables of the same name, and the build script prefers
-   them over the file. `MSIX_DESCRIPTION` works the same way. Setting all three identity
-   variables also silences the placeholder warning.
+| Repository variable | Script parameter | Manifest field |
+| --- | --- | --- |
+| `MSIX_IDENTITY_NAME` | `-IdentityName` | `Package/Identity/Name` |
+| `MSIX_PUBLISHER` | `-Publisher` | `Package/Identity/Publisher` |
+| `MSIX_PUBLISHER_DISPLAY_NAME` | `-PublisherDisplayName` | `Package/Properties/PublisherDisplayName` |
+| `MSIX_DISPLAY_NAME` | `-DisplayName` | `Package/Properties/DisplayName` |
 
 The precedence is: explicit script parameter, then `MSIX_*` environment variable, then
 `store-identity.json`.
+
+`packaging/windows/msix/store-identity.json` holds **placeholders**, marked with
+`"isPlaceholder": true`. While that flag is set, `Build-MsixPackage.ps1` **fails** if any of
+the four values above would come from the file, and the error names the repository variables
+that are missing. Supply them one of two ways:
+
+1. **In CI, without a commit** — set the repository variables above
+   (*Settings → Secrets and variables → Actions → Variables*) to the values reserved under
+   **App management → Product identity**. Both workflows pass all four to the packaging job as
+   environment variables of the same name. `MSIX_DESCRIPTION` works the same way but is not
+   part of the Store identity, so it is not required.
+2. **In the repository** — edit `store-identity.json` and drop `"isPlaceholder": true`.
+
+The check is per value, not all-or-nothing: leaving just `MSIX_PUBLISHER_DISPLAY_NAME` unset
+used to produce a package that looked correct and was rejected by the *Packages* page for a
+`PublisherDisplayName` that did not match the reserved publisher.
+
+### Building locally on the placeholders
+
+Pass `-AllowPlaceholderIdentity` to build a package on the placeholder identity anyway. It
+still installs for sideload testing and still exercises this script, and the build warns that
+Partner Center will reject it. Nothing that can reach a submission uses that switch:
+
+- A `v*` tag in `release.yml` verifies all four variables before publishing anything and fails
+  the *Package Microsoft Store MSIX* job, naming the missing ones, if any is unset.
+- The prerelease and manual runs of both workflows fall back to the placeholders only when the
+  variables are genuinely unset, and annotate the run with a warning when they do.
 
 `Identity/Publisher` is an X.500 distinguished name (`CN=A1B2C3D4-...`), not the company
 name; the build fails early if it does not look like one.

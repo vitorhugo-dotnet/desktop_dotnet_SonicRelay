@@ -443,6 +443,45 @@ foreach ($publishingWorkflowPath in $publishingWorkflows) {
     }
 }
 
+# The Microsoft Store matches the reserved package identity character for character, so every
+# one of the four MSIX_* repository variables has to reach the packaging job - a variable that
+# is simply not wired up produces a package that builds, uploads and is rejected. Both
+# workflows carry all four, and only release.yml may build on the placeholders, and only for a
+# build that is not a v* tag.
+$storeIdentityVariables = @(
+    'MSIX_IDENTITY_NAME'
+    'MSIX_PUBLISHER'
+    'MSIX_PUBLISHER_DISPLAY_NAME'
+    'MSIX_DISPLAY_NAME'
+)
+foreach ($storeWorkflowPath in $publishingWorkflows) {
+    $fullPath = Join-Path $root $storeWorkflowPath
+    if (-not (Test-Path -LiteralPath $fullPath)) {
+        continue
+    }
+
+    $storeWorkflow = Get-Content -Raw -LiteralPath $fullPath
+    $unwiredVariables = $storeIdentityVariables | Where-Object {
+        $storeWorkflow -notmatch "(?m)^\s*$($_):\s*\$\{\{\s*vars\.$_\s*\}\}\s*$"
+    }
+
+    if ($unwiredVariables.Count -gt 0) {
+        Write-Error "$storeWorkflowPath must pass every Store identity repository variable to the MSIX packaging job; missing: $($unwiredVariables -join ', ')."
+    }
+}
+
+$storeReleaseWorkflow = Get-Content -Raw -LiteralPath (Join-Path $root '.github/workflows/release.yml')
+
+# A v* tag is the only build whose package is submitted, so it must be the one build that
+# cannot fall back to the placeholder identity.
+if ($storeReleaseWorkflow -notmatch "(?s)Verify the reserved Store identity is configured.*?github\.ref_type\s*\}\}'\s*-eq\s*'tag'") {
+    Write-Error '.github/workflows/release.yml must verify the Store identity repository variables and fail a v* tag build when any is missing.'
+}
+
+if ($storeReleaseWorkflow -notmatch '(?s)Build Microsoft Store MSIX package.*?steps\.identity\.outputs\.allow-placeholder') {
+    Write-Error '.github/workflows/release.yml must only pass -AllowPlaceholderIdentity when the identity verification step allowed it.'
+}
+
 $releaseWorkflowPath = Join-Path $root '.github/workflows/release.yml'
 if (Test-Path -LiteralPath $releaseWorkflowPath) {
     $releaseWorkflow = Get-Content -Raw -LiteralPath $releaseWorkflowPath

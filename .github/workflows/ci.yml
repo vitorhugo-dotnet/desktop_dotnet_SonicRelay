@@ -359,17 +359,34 @@ jobs:
       - name: Build Microsoft Store MSIX package
         shell: pwsh
         env:
-          # Repository variables, not secrets: the package identity is public. Unset falls
-          # back to the placeholder identity in packaging/windows/msix/store-identity.json.
+          # Repository variables, not secrets: the package identity is public. All four map to
+          # a manifest field the Store matches character for character; see
+          # docs/microsoft-store-package.md.
           MSIX_IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
           MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
           MSIX_PUBLISHER_DISPLAY_NAME: ${{ vars.MSIX_PUBLISHER_DISPLAY_NAME }}
           MSIX_DISPLAY_NAME: ${{ vars.MSIX_DISPLAY_NAME }}
         run: |
-          ./packaging/windows/Build-MsixPackage.ps1 `
-            -PublishDirectory (Join-Path $env:GITHUB_WORKSPACE 'artifacts/publish/portable') `
-            -Version '${{ steps.metadata.outputs.store_version }}' `
-            -OutputDirectory (Join-Path $env:GITHUB_WORKSPACE 'artifacts/store')
+          $arguments = @{
+            PublishDirectory = (Join-Path $env:GITHUB_WORKSPACE 'artifacts/publish/portable')
+            Version = '${{ steps.metadata.outputs.store_version }}'
+            OutputDirectory = (Join-Path $env:GITHUB_WORKSPACE 'artifacts/store')
+          }
+
+          # This workflow never runs on a v* tag, so it never produces a package for
+          # submission - release.yml does, and it fails outright when an identity variable is
+          # missing. Here a missing variable only downgrades the build to the placeholder
+          # identity, and says so, so the packaging pipeline stays verifiable. With all four
+          # set the build is strict: a blank or renamed variable fails on main rather than
+          # producing a package Partner Center would reject.
+          $required = @('MSIX_IDENTITY_NAME', 'MSIX_PUBLISHER', 'MSIX_PUBLISHER_DISPLAY_NAME', 'MSIX_DISPLAY_NAME')
+          $missing = @($required | Where-Object { [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_)) })
+          if ($missing.Count -gt 0) {
+            Write-Host "::warning::Missing Microsoft Store identity repository variable(s): $($missing -join ', '). This package uses the placeholder identity in packaging/windows/msix/store-identity.json and cannot be submitted to Partner Center."
+            $arguments.AllowPlaceholderIdentity = $true
+          }
+
+          ./packaging/windows/Build-MsixPackage.ps1 @arguments
 
       # The MSIX ships on the release as well: it is the artifact a Partner Center submission
       # is made from, and a workflow artifact expires. It stays unsigned - the Store re-signs
