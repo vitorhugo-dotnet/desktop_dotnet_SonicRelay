@@ -62,9 +62,9 @@ public sealed class PublisherWorkflowDuplexTests
     }
 
     [Fact]
-    public async Task ADeviceWithoutAMicrophoneRefusesToStartATwoWaySession()
+    public async Task ADeviceThatCannotPlayAudioRefusesToStartATwoWaySession()
     {
-        await using var context = new WorkflowContext(withMicrophone: false);
+        await using var context = new WorkflowContext(withPlayback: false);
         await context.AuthenticateAsync();
 
         await context.Workflow.CreateSessionAsync(duplex: true);
@@ -75,35 +75,27 @@ public sealed class PublisherWorkflowDuplexTests
     }
 
     [Fact]
-    public async Task AOneWaySessionPublishesTheSystemOutput()
+    public async Task BothModesPublishTheSameSystemOutputMix()
     {
-        await using var context = new WorkflowContext();
-        await context.AuthenticateAsync();
-        await context.Workflow.CreateSessionAsync();
+        // The only thing two-way audio adds is playback. There is no second capture device and
+        // no microphone anywhere in this app: what is published is the system/app audio mix,
+        // in both directions.
+        await using var oneWay = new WorkflowContext();
+        await oneWay.AuthenticateAsync();
+        await oneWay.Workflow.CreateSessionAsync();
+        await oneWay.Workflow.StartAudioAsync();
 
-        await context.Workflow.StartAudioAsync();
+        await using var twoWay = new WorkflowContext();
+        await twoWay.AuthenticateAsync();
+        await twoWay.Workflow.CreateSessionAsync(duplex: true);
+        await twoWay.Workflow.StartAudioAsync();
 
-        Assert.True(context.Audio.StartCalled);
-        Assert.False(context.Microphone.StartCalled);
+        Assert.True(oneWay.Audio.StartCalled);
+        Assert.True(twoWay.Audio.StartCalled);
     }
 
     [Fact]
-    public async Task ATwoWaySessionPublishesTheMicrophone()
-    {
-        await using var context = new WorkflowContext();
-        await context.AuthenticateAsync();
-        await context.Workflow.CreateSessionAsync(duplex: true);
-
-        await context.Workflow.StartAudioAsync();
-
-        // Publishing the system output mix into a call would send the other side its own
-        // voice back through the speakers.
-        Assert.True(context.Microphone.StartCalled);
-        Assert.False(context.Audio.StartCalled);
-    }
-
-    [Fact]
-    public async Task StoppingAudioReleasesBothCaptureDevices()
+    public async Task StoppingAudioReleasesTheCaptureDevice()
     {
         await using var context = new WorkflowContext();
         await context.AuthenticateAsync();
@@ -112,7 +104,6 @@ public sealed class PublisherWorkflowDuplexTests
 
         await context.Workflow.StopAudioAsync();
 
-        Assert.True(context.Microphone.StopCalled);
         Assert.True(context.Audio.StopCalled);
     }
 
@@ -210,9 +201,9 @@ public sealed class PublisherWorkflowDuplexTests
 
     private sealed class WorkflowContext : IAsyncDisposable
     {
-        public WorkflowContext(bool withMicrophone = true)
+        public WorkflowContext(bool withPlayback = true)
         {
-            Microphone = new FakeCapture();
+            Playback = withPlayback ? new AudioPlaybackService(new NullAudioPlaybackBackend()) : null;
             Workflow = new PublisherWorkflow(
                 new FakeIdentity(),
                 new FakeCredentialStore(),
@@ -221,21 +212,24 @@ public sealed class PublisherWorkflowDuplexTests
                 Audio,
                 new FakePairings(),
                 WebRtc,
-                withMicrophone ? Microphone : null,
-                playback: null,
+                Playback,
                 onSessionModeChanged: mode => PublishedMode = mode);
         }
 
         public PublisherWorkflow Workflow { get; }
         public FakeSessionApi Sessions { get; } = new();
         public FakeCapture Audio { get; } = new();
-        public FakeCapture Microphone { get; }
+        public AudioPlaybackService? Playback { get; }
         public FakePublisher WebRtc { get; } = new();
         public string PublishedMode { get; private set; } = SessionModes.Broadcast;
 
         public Task AuthenticateAsync() => Workflow.InitializeDeviceIdentityAsync();
 
-        public ValueTask DisposeAsync() => Workflow.DisposeAsync();
+        public async ValueTask DisposeAsync()
+        {
+            await Workflow.DisposeAsync();
+            if (Playback is not null) await Playback.DisposeAsync();
+        }
     }
 
     private sealed class FakeSessionApi : ISessionApiClient

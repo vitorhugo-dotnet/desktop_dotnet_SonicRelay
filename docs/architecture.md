@@ -37,7 +37,6 @@ Capability project references establish dependency direction: Signaling depends 
 ```mermaid
 flowchart LR
     Wasapi[WASAPI loopback] --> Frames[Audio frames]
-    Mic[Microphone capture] --> Frames
     Frames --> WebRtc[WebRTC and Opus]
     Signaling[WebSocket signaling] --> WebRtc
     Api[Backend API] --> Session[Stream session state]
@@ -47,10 +46,10 @@ flowchart LR
     PeerA --> Playback[Audio playback]
 ```
 
-Which capture source feeds the pipeline is decided by the session's mode: the system output
-mix for a one-way session, the microphone for a two-way one. Playback only exists in a two-way
-session, and only for peers the backend has authorized to publish — see
-[two-way audio](two-way-audio.md).
+Capture is the system output mix in every mode — SonicRelay never captures a microphone.
+Playback only exists in a two-way session, and only for peers the backend has authorized to
+publish; see [two-way audio](two-way-audio.md), including why capturing and playing on the
+same endpoint is a feedback loop.
 
 The UI will request operations through application-level orchestration added in later issues. Capability projects must not depend on the App project. Cross-cutting contracts should be introduced only when a concrete feature needs them.
 

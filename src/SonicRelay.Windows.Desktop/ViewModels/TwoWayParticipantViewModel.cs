@@ -4,7 +4,7 @@ namespace SonicRelay.Windows.Desktop.ViewModels;
 
 /// <summary>
 /// One participant row in a two-way session, with the publisher-only control that grants or
-/// revokes its permission to talk.
+/// revokes its permission to transmit its audio.
 ///
 /// Everything shown here comes from the backend's own broadcasts — never from what the peer
 /// claims about itself — because the API is the only authority on who may publish, and it
@@ -36,9 +36,9 @@ public sealed class TwoWayParticipantViewModel : ViewModelBase
     public string Status => State switch
     {
         { AudioSendAllowed: false } => "Listening only",
-        { AudioMuted: true } => "Muted",
-        { CanSendAudio: true } => "Talking",
-        _ => "Can talk",
+        { AudioMuted: true } => "Not sending audio",
+        { CanSendAudio: true } => "Sending audio",
+        _ => "Allowed to send audio",
     };
 
     public bool CanTalk => State.AudioSendAllowed;
@@ -46,7 +46,8 @@ public sealed class TwoWayParticipantViewModel : ViewModelBase
     /// <summary>The publisher never revokes its own permission, so its row has no control.</summary>
     public bool ShowsPermissionControl => !State.IsPublisher && Id != Guid.Empty;
 
-    public string PermissionActionLabel => State.AudioSendAllowed ? "Revoke talking" : "Allow talking";
+    public string PermissionActionLabel =>
+        State.AudioSendAllowed ? "Stop accepting audio" : "Accept audio";
 
     private Task TogglePermissionAsync() => setPermission(Id, !State.AudioSendAllowed);
 }

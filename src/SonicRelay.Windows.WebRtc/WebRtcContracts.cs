@@ -27,7 +27,7 @@ public enum WebRtcAudioDirection
     /// <summary>
     /// Two-way (`duplex`). The audio m-line is offered <c>sendrecv</c> from the very first
     /// offer even when neither side is transmitting yet: this side is the only offerer in
-    /// the protocol, so a viewer that later turns on its microphone has no way to add an
+    /// the protocol, so a peer that later starts sending its own audio has no way to add an
     /// m-line of its own — it can only answer into one that already exists.
     /// </summary>
     SendRecv

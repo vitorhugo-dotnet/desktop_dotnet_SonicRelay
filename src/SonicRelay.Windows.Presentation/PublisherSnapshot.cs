@@ -31,6 +31,9 @@ public sealed record PublisherSnapshot
     /// <summary>Playback state for audio arriving from participants (two-way sessions only).</summary>
     public AudioPlaybackState PlaybackState { get; init; } = AudioPlaybackState.Stopped;
 
+    /// <summary>The endpoint incoming audio is played on, once one has been opened.</summary>
+    public AudioDeviceInfo? PlaybackDevice { get; init; }
+
     /// <summary>
     /// The backend's authoritative state for every participant seen in this session, this
     /// device included. The only place publish permission is read from.
@@ -46,6 +49,20 @@ public sealed record PublisherSnapshot
     public bool CanEndSession => SessionId.HasValue && !IsBusy;
 
     public bool IsDuplexSession => SessionModes.IsDuplex(SessionMode);
+
+    /// <summary>
+    /// Whether incoming audio is being played onto the very endpoint this device is capturing.
+    ///
+    /// That is a feedback loop, not a subtle quality problem: what the other side sends is
+    /// played, captured by the loopback, and sent straight back to them. It cannot be fixed
+    /// from inside the app — the capture endpoint and the playback endpoint have to differ —
+    /// so it is surfaced rather than worked around.
+    /// </summary>
+    public bool PlaysIntoCapturedOutput =>
+        IsDuplexSession
+        && PlaybackDevice is { Id.Length: > 0 }
+        && AudioDiagnostics?.Device is { Id.Length: > 0 } captured
+        && string.Equals(captured.Id, PlaybackDevice.Id, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Whether the mute control applies at all: only a live two-way session has one.</summary>
     public bool CanToggleOutgoingAudio => IsDuplexSession && SessionId.HasValue && !IsBusy;

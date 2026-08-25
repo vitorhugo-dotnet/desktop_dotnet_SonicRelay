@@ -28,25 +28,28 @@
         </StackPanel>
       </Border>
 
-      <!-- Two-way audio (dotnet_SonicRelay#22). Hidden entirely when this build has no
-           microphone or playback device: a control that could only half work is worse than
-           no control at all. -->
+      <!-- Two-way audio (dotnet_SonicRelay#22): the same system/app audio mix in both
+           directions, never a microphone. Hidden entirely when this build has no playback
+           device, since that is the only thing two-way audio adds. -->
       <Border Classes="card" IsVisible="{Binding SupportsTwoWayAudio}">
         <StackPanel Spacing="12">
           <TextBlock Classes="card-title" Text="Two-way audio" />
           <TextBlock Classes="metric-label"
-                     Text="A two-way session publishes this device's microphone instead of the system output, and plays what the other participants send." />
+                     Text="A two-way session keeps publishing this device's system audio and also plays what the other participants send. No microphone is ever used." />
 
           <CheckBox IsChecked="{Binding StartNextSessionAsTwoWay}"
                     IsVisible="{Binding !IsTwoWaySession}"
-                    Content="Open the next session for conversation"
-                    AutomationProperties.Name="Open the next session for conversation" />
+                    Content="Share audio both ways in the next session"
+                    AutomationProperties.Name="Share audio both ways in the next session" />
           <TextBlock Classes="metric-label"
                      IsVisible="{Binding !IsTwoWaySession}"
                      Text="A session's mode is fixed when it is created, so this applies to the next one." />
 
           <StackPanel Spacing="12" IsVisible="{Binding IsTwoWaySession}">
             <TextBlock Classes="metric-label" Text="{Binding PlaybackStatus}" />
+            <TextBlock TextWrapping="Wrap"
+                       IsVisible="{Binding PlaysIntoCapturedOutput}"
+                       Text="{Binding PlaybackLoopWarning}" />
             <Button Command="{Binding ToggleMuteCommand}"
                     Content="{Binding MuteActionLabel}"
                     HorizontalAlignment="Left" />

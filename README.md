@@ -86,12 +86,13 @@ The WebSocket carries signaling control messages only. It does not carry audio; 
 
 ## Two-way audio
 
-A session can be created for conversation instead of one-way listening: it publishes this
-device's microphone and plays back what the other authorized participants send, over the same
-WebRTC connection. The Audio page opens the next session for conversation, mutes the
-microphone, and — as the session's owner — grants or revokes each participant's permission to
-talk. Supported on Windows and Linux; see [two-way audio](docs/two-way-audio.md) for the
-platform matrix, the permission model, and what the backend can and cannot enforce.
+A session can share audio in both directions instead of one way: this machine keeps publishing
+its system/app audio and also plays back what the other authorized participants send, over the
+same WebRTC connection. **No microphone is ever used** — what SonicRelay shares is always the
+system audio mix. The Audio page opens the next session as two-way, stops or resumes what this
+device sends, and — as the session's owner — grants or revokes each participant's permission
+to send. Supported on Windows and Linux; see [two-way audio](docs/two-way-audio.md) for the
+platform matrix, the permission model, and the feedback-loop caveat.
 
 ## Planned milestones
 

@@ -38,11 +38,8 @@ public static class DesktopRuntimeFactory
         PublisherRuntime.Create(
             backendBaseUrl,
             new AudioCaptureService(),
-            // Two-way audio uses a separate capture service on the microphone endpoint: the
-            // loopback service is pinned to a render endpoint and its device picker means
-            // "which output do I publish", which is a different question from "which
-            // microphone do I talk into".
-            microphoneCapture: AudioCaptureService.Create(new WasapiMicrophoneBackend(), new NullOutputDeviceProbe()),
+            // Two-way audio publishes the same system-output mix a one-way session does; the
+            // render backend is what lets this device also *hear* the other participants.
             playbackBackend: new WasapiRenderBackend());
 
     private static PublisherRuntime CreateLinux(Uri backendBaseUrl)
@@ -68,9 +65,6 @@ public static class DesktopRuntimeFactory
         // pw-play is located optionally (see PipeWireCommandLocator), so an install without the
         // full PipeWire user tools keeps publishing and simply offers no two-way audio, rather
         // than failing to launch over a feature the user may never use.
-        var microphone = commandPaths.PwPlay is null
-            ? null
-            : AudioCaptureService.Create(new PipeWireMicrophoneBackend(processRunner, commandPaths), new NullOutputDeviceProbe());
         var playbackBackend = commandPaths.PwPlay is null
             ? null
             : new PipeWirePlaybackBackend(processRunner, commandPaths);
@@ -79,7 +73,6 @@ public static class DesktopRuntimeFactory
             backendBaseUrl,
             audioCapture,
             audioOutputPreferenceOverride: audioOutputPreference,
-            microphoneCapture: microphone,
             playbackBackend: playbackBackend);
     }
 
@@ -91,11 +84,11 @@ public static class DesktopRuntimeFactory
     /// store (which the picker still writes, harmlessly, for the "System
     /// default" entry).
     ///
-    /// Two-way audio is not composed here. The bundled helper is a ScreenCaptureKit
-    /// system-audio tap, which is the wrong capture path for a microphone, and macOS has no
-    /// playback backend in this repository yet — so the runtime reports two-way audio
-    /// unsupported and the controls stay off, rather than offering a conversation this build
-    /// could only half hold up. Adding an AVAudioEngine input/output helper is its own change.
+    /// Two-way audio is not composed here: macOS has no playback backend in this repository
+    /// yet, so the runtime reports two-way audio unsupported and the controls stay off rather
+    /// than offering a session this build could only half hold up. Capture is already the
+    /// right thing (the ScreenCaptureKit system-audio tap); only playback is missing, and
+    /// adding a CoreAudio output helper is its own change.
     /// </summary>
     private static PublisherRuntime CreateMacOs(Uri backendBaseUrl)
     {

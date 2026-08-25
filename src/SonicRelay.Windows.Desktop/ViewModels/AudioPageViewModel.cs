@@ -7,13 +7,16 @@ namespace SonicRelay.Windows.Desktop.ViewModels;
 
 /// <summary>
 /// Audio surface (issue #32): picks which system output endpoint to capture, and — for
-/// dotnet_SonicRelay#22 — hosts the two-way audio controls: opening the next session for
-/// conversation, muting, and the publisher-only permission control over who may talk.
+/// dotnet_SonicRelay#22 — hosts the two-way audio controls: opening the next session so both
+/// sides share audio, muting what this device sends, and the publisher-only permission
+/// control over who may transmit.
 ///
-/// The two-way half is only offered when the platform composition actually supplied both a
-/// microphone and a playback device. Offering it otherwise would let a user start a
-/// conversation this build could only half hold up. Without an attached runtime the page is
-/// <see cref="IsConnected"/> = false and read-only.
+/// What is shared is always the system/app audio mix, in both directions. There is no
+/// microphone anywhere in this app.
+///
+/// The two-way half is only offered when the platform composition supplied a playback device,
+/// since that is the only thing two-way audio adds to a one-way session. Without an attached
+/// runtime the page is <see cref="IsConnected"/> = false and read-only.
 /// </summary>
 public sealed class AudioPageViewModel : ViewModelBase
 {
@@ -60,15 +63,15 @@ public sealed class AudioPageViewModel : ViewModelBase
     public bool IsConnected { get; }
     public IReadOnlyList<AudioOutputDevice> Devices { get; }
 
-    /// <summary>Whether this build can capture a microphone and play remote audio back.</summary>
+    /// <summary>Whether this build can play back what other participants send.</summary>
     public bool SupportsTwoWayAudio => workflow?.SupportsTwoWayAudio == true;
 
     public RelayCommand ToggleMuteCommand { get; } = new(() => Task.CompletedTask, () => false);
 
     /// <summary>
-    /// Whether the next session should be created for conversation. It applies at creation
-    /// because the backend fixes a session's mode there and never changes it — and a peer
-    /// connection's audio direction is fixed with it.
+    /// Whether the next session should share audio both ways. It applies at creation because
+    /// the backend fixes a session's mode there and never changes it — and a peer connection's
+    /// audio direction is fixed with it.
     /// </summary>
     public bool StartNextSessionAsTwoWay
     {
@@ -80,7 +83,7 @@ public sealed class AudioPageViewModel : ViewModelBase
 
     public bool IsMuted => snapshot?.OutgoingAudioMuted == true;
 
-    public string MuteActionLabel => IsMuted ? "Unmute microphone" : "Mute microphone";
+    public string MuteActionLabel => IsMuted ? "Resume sending audio" : "Stop sending audio";
 
     public string PlaybackStatus => snapshot?.PlaybackState switch
     {
@@ -89,6 +92,19 @@ public sealed class AudioPageViewModel : ViewModelBase
         AudioPlaybackState.Faulted => "The playback device is unavailable",
         _ => "No incoming audio yet",
     };
+
+    /// <summary>
+    /// Whether incoming audio is being played onto the very endpoint this device captures,
+    /// which feeds the other side its own audio back. The fix is outside the app — capture a
+    /// different output, or send the incoming audio to another device — so this says exactly
+    /// that instead of pretending it can be handled here.
+    /// </summary>
+    public bool PlaysIntoCapturedOutput => snapshot?.PlaysIntoCapturedOutput == true;
+
+    public string PlaybackLoopWarning =>
+        "Incoming audio is playing on the same output this device captures, so the other side "
+        + "hears its own audio back. Capture a different output above, or route playback to "
+        + "another device.";
 
     public IReadOnlyList<TwoWayParticipantViewModel> Participants { get; private set; } = [];
 
@@ -104,6 +120,7 @@ public sealed class AudioPageViewModel : ViewModelBase
         RaisePropertyChanged(nameof(IsMuted));
         RaisePropertyChanged(nameof(MuteActionLabel));
         RaisePropertyChanged(nameof(PlaybackStatus));
+        RaisePropertyChanged(nameof(PlaysIntoCapturedOutput));
         RaisePropertyChanged(nameof(Participants));
         ToggleMuteCommand.RaiseCanExecuteChanged();
     }

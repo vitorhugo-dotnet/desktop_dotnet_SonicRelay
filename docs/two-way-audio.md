@@ -2,32 +2,49 @@
 
 Implements the desktop half of [dotnet_SonicRelay#22](https://github.com/vitorhugo-dotnet/dotnet_SonicRelay/issues/22).
 
+**SonicRelay never captures a microphone.** What it shares — in every mode, in every
+direction — is the system/app audio mix: whatever the machine is playing. Two-way audio means
+both sides share that mix with each other, not that anyone talks into a microphone.
+
 A session's mode is chosen once, when it is created, and never changes (backend ADR 0007).
-`broadcast` — the default, and what every session was before this — publishes the system
-output mix to viewers that only listen. `duplex` publishes this device's **microphone** and
-plays back what the other authorized participants send, over the same peer connection.
+`broadcast` — the default, and what every session was before this — publishes this machine's
+audio to participants that only listen. `duplex` also plays back what the other authorized
+participants are sending.
 
 ## What changes in a duplex session
 
 | | `broadcast` | `duplex` |
 | --- | --- | --- |
-| Capture source | system output (WASAPI loopback / PipeWire sink monitor) | microphone |
+| Capture source | system output mix | **the same** system output mix |
 | Audio m-line | `sendonly` | `sendrecv`, from the very first offer |
 | Playback | none | decoded Opus from authorized peers |
 | Mute | stops the encoder, announced to nobody | stops the encoder, announced to the session |
 
-The `sendrecv` direction is set from the first offer even before anyone is transmitting. This
-device is the only offerer in the protocol, so a viewer that later turns its microphone on has
-no way to add an m-line of its own — it can only answer into one that already accepts audio.
+Capture is deliberately identical in both modes: playback is the only thing two-way audio
+adds, and it is the only thing a platform can be missing.
+
+The `sendrecv` direction is set from the first offer even before anyone is sending. This
+device is the only offerer in the protocol, so a peer that later starts transmitting has no
+way to add an m-line of its own — it can only answer into one that already accepts audio.
+
+## Feedback loops
+
+Capturing the system output *and* playing incoming audio onto that same output is a loop: what
+the other side sends is played, picked up by the loopback capture, and sent straight back.
+
+The app cannot fix that from the inside, so it detects and reports it rather than working
+around it: `PublisherSnapshot.PlaysIntoCapturedOutput` compares the captured endpoint with the
+one playback opened, and the Audio page says so in the two-way card. The fix is to capture a
+different output (the picker on that page) or to send Windows' *communications* output — which
+is where playback opens — to another device such as a headset.
 
 ## Renegotiation
 
-A viewer that adds or drops its microphone sends `webrtc.renegotiate`. This device answers
-with a fresh offer on the **existing** peer connection — no ICE restart, because the network
-path is fine and only the media description changed — and marks the payload
-`"renegotiation": true` so the viewer applies it in place instead of rebuilding. An ordinary
-offer is byte-identical to what pre-duplex builds sent, so a viewer that ignores the flag is
-unaffected.
+A peer that starts or stops transmitting sends `webrtc.renegotiate`. This device answers with
+a fresh offer on the **existing** peer connection — no ICE restart, because the network path
+is fine and only the media description changed — and marks the payload `"renegotiation": true`
+so the peer applies it in place instead of rebuilding. An ordinary offer is byte-identical to
+what pre-duplex builds sent, so a peer that ignores the flag is unaffected.
 
 ## Who may publish
 
@@ -44,24 +61,25 @@ existed, whose contract was simply "the publisher publishes", so its audio is pl
 
 ## Platform support
 
-Two-way audio is composed only where the platform supplies **both** halves. Offering it with
-one half missing would let a user start a conversation the build could only half hold up.
+| Platform | Capture (send) | Playback (receive) | Two-way |
+| --- | --- | --- | --- |
+| Windows | WASAPI loopback | `WasapiRenderBackend` | yes |
+| Linux | PipeWire sink monitor | `PipeWirePlaybackBackend` (`pw-play` over stdin) | yes |
+| macOS | ScreenCaptureKit tap | not implemented | no |
 
-| Platform | Microphone | Playback |
-| --- | --- | --- |
-| Windows | `WasapiMicrophoneBackend` (WASAPI shared mode, communications endpoint) | `WasapiRenderBackend` (WASAPI shared mode) |
-| Linux | `PipeWireMicrophoneBackend` (`pw-record`, default source) | `PipeWirePlaybackBackend` (`pw-play` over stdin) |
-| macOS | not implemented | not implemented |
+On Linux `pw-play` is located optionally, so an install without the full PipeWire user tools
+keeps publishing and simply offers no two-way audio.
 
-On Windows the user must have allowed desktop apps to use the microphone in Privacy settings;
-a denial surfaces as an `AccessDenied` capture error naming that setting, not as a generic
-failure. On Linux `pw-play` is located optionally, so an install without the full PipeWire
-user tools keeps publishing and simply offers no two-way audio.
+macOS captures fine already; only playback is missing, and it is deliberately absent rather
+than stubbed. `PublisherRuntime.SupportsTwoWayAudio` reports false there and the controls stay
+off. Adding a CoreAudio output helper is its own change.
 
-macOS is deliberately excluded rather than stubbed: the bundled helper is a ScreenCaptureKit
-system-audio tap, which is the wrong capture path for a microphone, and there is no playback
-backend in this repository yet. `PublisherRuntime.SupportsTwoWayAudio` reports false there and
-the controls stay off. Adding an AVAudioEngine input/output helper is its own change.
+## What is not here
+
+The mobile viewer cannot yet publish *its* system audio, so "play music on the phone and hear
+it on the PC" does not work end to end. That is a limitation of the mobile client's media
+stack, not of this protocol or of this app — see the note in the Flutter repository. This side
+is ready to receive it the moment a peer can send it.
 
 ## Related docs
 

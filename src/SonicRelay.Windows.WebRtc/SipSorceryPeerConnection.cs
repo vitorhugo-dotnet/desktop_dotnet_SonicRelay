@@ -88,8 +88,8 @@ public sealed class SipSorceryPeerConnection : IWebRtcPeerConnection
             channels,
             $"useinbandfec=1;stereo={stereo};sprop-stereo={stereo};maxaveragebitrate={bitrate};maxplaybackrate=48000");
         // `sendrecv` from the first offer in a duplex session, even though nothing is coming
-        // back yet: this side is the only offerer, so a viewer that later turns on its
-        // microphone can only answer into an m-line that already accepts audio.
+        // back yet: this side is the only offerer, so a peer that later starts sending its own
+        // audio can only answer into an m-line that already accepts audio.
         this.connection.addTrack(new MediaStreamTrack(
             opusFormat,
             direction == WebRtcAudioDirection.SendRecv
@@ -166,8 +166,8 @@ public sealed class SipSorceryPeerConnection : IWebRtcPeerConnection
     {
         ThrowIfDisposed();
         // Deliberately no restartIce(): the network path is fine here, only the media
-        // description changed. Regenerating ICE credentials would make every microphone
-        // toggle re-run connectivity checks and drop audio for the duration.
+        // description changed. Regenerating ICE credentials would make every start/stop of a
+        // peer's audio re-run connectivity checks and drop audio for the duration.
         return await CreateOfferAsync(cancellationToken).ConfigureAwait(false);
     }
 

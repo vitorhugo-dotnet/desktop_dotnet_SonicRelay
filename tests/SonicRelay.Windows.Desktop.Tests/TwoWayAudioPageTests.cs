@@ -46,7 +46,7 @@ public sealed class TwoWayAudioPageTests : IDisposable
 
         Assert.True(page.IsTwoWaySession);
         Assert.True(page.ToggleMuteCommand.CanExecute(null));
-        Assert.Equal("Mute microphone", page.MuteActionLabel);
+        Assert.Equal("Stop sending audio", page.MuteActionLabel);
     }
 
     [Fact]
@@ -62,7 +62,7 @@ public sealed class TwoWayAudioPageTests : IDisposable
         });
 
         Assert.True(page.IsMuted);
-        Assert.Equal("Unmute microphone", page.MuteActionLabel);
+        Assert.Equal("Resume sending audio", page.MuteActionLabel);
     }
 
     [Fact]
@@ -101,7 +101,7 @@ public sealed class TwoWayAudioPageTests : IDisposable
 
         Assert.True(viewer.ShowsPermissionControl);
         Assert.True(viewer.CanTalk);
-        Assert.Equal("Revoke talking", viewer.PermissionActionLabel);
+        Assert.Equal("Stop accepting audio", viewer.PermissionActionLabel);
         Assert.Equal(viewerId, viewer.Id);
     }
 
@@ -120,7 +120,68 @@ public sealed class TwoWayAudioPageTests : IDisposable
         var viewer = Assert.Single(page.Participants);
         Assert.False(viewer.CanTalk);
         Assert.Equal("Listening only", viewer.Status);
-        Assert.Equal("Allow talking", viewer.PermissionActionLabel);
+        Assert.Equal("Accept audio", viewer.PermissionActionLabel);
+    }
+
+    [Fact]
+    public void PlayingOntoTheCapturedOutputIsSurfacedAsALoop()
+    {
+        var page = CreatePage();
+        var device = new AudioDeviceInfo("render-1", "Speakers", 48000, 2, AudioSampleFormat.IeeeFloat32);
+
+        page.Update(new PublisherSnapshot
+        {
+            SessionId = Guid.NewGuid(),
+            SessionMode = SessionModes.Duplex,
+            PlaybackDevice = device,
+            AudioDiagnostics = new AudioCaptureDiagnostics(
+                AudioCaptureState.Capturing, device, null, AudioLevelSnapshot.Silence, 0, 0),
+        });
+
+        // Capturing the same endpoint that incoming audio plays on feeds the other side its
+        // own audio back. It cannot be fixed from inside the app, so it is surfaced.
+        Assert.True(page.PlaysIntoCapturedOutput);
+    }
+
+    [Fact]
+    public void DistinctCaptureAndPlaybackEndpointsAreNotALoop()
+    {
+        var page = CreatePage();
+
+        page.Update(new PublisherSnapshot
+        {
+            SessionId = Guid.NewGuid(),
+            SessionMode = SessionModes.Duplex,
+            PlaybackDevice = new AudioDeviceInfo("headset", "Headset", 48000, 2, AudioSampleFormat.IeeeFloat32),
+            AudioDiagnostics = new AudioCaptureDiagnostics(
+                AudioCaptureState.Capturing,
+                new AudioDeviceInfo("render-1", "Speakers", 48000, 2, AudioSampleFormat.IeeeFloat32),
+                null,
+                AudioLevelSnapshot.Silence,
+                0,
+                0),
+        });
+
+        Assert.False(page.PlaysIntoCapturedOutput);
+    }
+
+    [Fact]
+    public void AOneWaySessionNeverReportsALoop()
+    {
+        var page = CreatePage();
+        var device = new AudioDeviceInfo("render-1", "Speakers", 48000, 2, AudioSampleFormat.IeeeFloat32);
+
+        page.Update(new PublisherSnapshot
+        {
+            SessionId = Guid.NewGuid(),
+            SessionMode = SessionModes.Broadcast,
+            PlaybackDevice = device,
+            AudioDiagnostics = new AudioCaptureDiagnostics(
+                AudioCaptureState.Capturing, device, null, AudioLevelSnapshot.Silence, 0, 0),
+        });
+
+        // Nothing is played back in a one-way session, so the endpoints matching is harmless.
+        Assert.False(page.PlaysIntoCapturedOutput);
     }
 
     [Fact]
