@@ -16,7 +16,12 @@
     "Every value can be overridden without a commit through the matching environment",
     "variable - MSIX_IDENTITY_NAME, MSIX_PUBLISHER, MSIX_PUBLISHER_DISPLAY_NAME,",
     "MSIX_DISPLAY_NAME, MSIX_DESCRIPTION - which the release workflows read from the",
-    "repository variables of the same name. See docs/microsoft-store-package.md."
+    "repository variables of the same name. See docs/microsoft-store-package.md.",
+    "",
+    "While \"isPlaceholder\" is true, Build-MsixPackage.ps1 fails rather than build on any of",
+    "the four identity values below, so no release can quietly produce a package Partner",
+    "Center will reject. Pass -AllowPlaceholderIdentity to build one anyway for local",
+    "sideload testing. Replacing the values here and dropping \"isPlaceholder\" also works."
   ],
   "identityName": "SonicRelay.WindowsPublisher",
   "publisher": "CN=SonicRelay",

@@ -156,11 +156,13 @@ try {
     $build = Invoke-BuildScript -OutputName 'default' -Parameter @{
         PublishDirectory = $publishDirectory
         Version = '1.4.2'
+        AllowPlaceholderIdentity = $true
     }
 
     $manifest = [xml] (Get-Content -Raw -LiteralPath $build.Manifest)
     $namespaceManager = [System.Xml.XmlNamespaceManager]::new($manifest.NameTable)
     $namespaceManager.AddNamespace('m', 'http://schemas.microsoft.com/appx/manifest/foundation/windows10')
+    $namespaceManager.AddNamespace('uap', 'http://schemas.microsoft.com/appx/manifest/uap/windows10')
     $namespaceManager.AddNamespace('rescap', 'http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities')
 
     $identityNode = $manifest.SelectSingleNode('/m:Package/m:Identity', $namespaceManager)
@@ -212,7 +214,7 @@ try {
     Assert-True -Because 'symbols must not ship inside the installed package' `
         -Condition (-not ($layout | Where-Object { $_.EndsWith('.pdb') }))
 
-    Assert-Contains -Because 'building on the committed placeholder identity must warn that Partner Center will reject it' `
+    Assert-Contains -Because 'an explicitly allowed placeholder build must still warn that Partner Center will reject it' `
         -Haystack $build.Warnings -Needle 'placeholder Store identity'
 
     $makeAppxArguments = Get-Content -Raw -LiteralPath $build.Arguments
@@ -274,33 +276,125 @@ try {
         -Condition (-not $override.Warnings.Contains('placeholder Store identity'))
 
     # --- Partner Center identity carried as CI repository variables ----------------------
-    $fromEnvironment = Invoke-BuildScript -OutputName 'environment' -Environment @{
+    # The four MSIX_* repository variables the release workflow exports are the only supported
+    # way to carry the reserved Partner Center identity, so every one of them has to reach the
+    # manifest field it maps to. Getting PublisherDisplayName wrong here is what Partner Center
+    # rejects the .msixupload for.
+    $environmentIdentityValues = @{
         MSIX_IDENTITY_NAME = '41968SonicRelay.SonicRelayFromCi'
         MSIX_PUBLISHER = 'CN=9E7D5C31-0B84-4D2A-A6F1-3C8E2B7A5D40'
         MSIX_PUBLISHER_DISPLAY_NAME = 'SonicRelay from CI'
-    } -Parameter @{
+        MSIX_DISPLAY_NAME = 'SonicRelay CI Build'
+    }
+
+    $fromEnvironment = Invoke-BuildScript -OutputName 'environment' -Environment $environmentIdentityValues -Parameter @{
         PublishDirectory = $publishDirectory
         Version = '3.1.0'
     }
 
     $environmentManifest = [xml] (Get-Content -Raw -LiteralPath $fromEnvironment.Manifest)
     $environmentIdentity = $environmentManifest.SelectSingleNode('/m:Package/m:Identity', $namespaceManager)
-    Assert-True -Because 'MSIX_IDENTITY_NAME must override the repository identity file' `
-        -Condition ($environmentIdentity.GetAttribute('Name') -eq '41968SonicRelay.SonicRelayFromCi')
-    Assert-True -Because 'MSIX_PUBLISHER must override the repository identity file' `
-        -Condition ($environmentIdentity.GetAttribute('Publisher') -eq 'CN=9E7D5C31-0B84-4D2A-A6F1-3C8E2B7A5D40')
-    Assert-True -Because 'a fully overridden identity from the environment must not warn about the placeholder' `
-        -Condition (-not $fromEnvironment.Warnings.Contains('placeholder Store identity'))
+    Assert-True -Because 'MSIX_IDENTITY_NAME must reach Package/Identity/Name' `
+        -Condition ($environmentIdentity.GetAttribute('Name') -eq $environmentIdentityValues.MSIX_IDENTITY_NAME)
+    Assert-True -Because 'MSIX_PUBLISHER must reach Package/Identity/Publisher' `
+        -Condition ($environmentIdentity.GetAttribute('Publisher') -eq $environmentIdentityValues.MSIX_PUBLISHER)
+
+    $environmentPublisherDisplayName = $environmentManifest.SelectSingleNode('/m:Package/m:Properties/m:PublisherDisplayName', $namespaceManager)
+    Assert-True -Because "MSIX_PUBLISHER_DISPLAY_NAME must reach Package/Properties/PublisherDisplayName, got '$($environmentPublisherDisplayName.InnerText)'" `
+        -Condition ($environmentPublisherDisplayName.InnerText -eq $environmentIdentityValues.MSIX_PUBLISHER_DISPLAY_NAME)
 
     $environmentDisplayName = $environmentManifest.SelectSingleNode('/m:Package/m:Properties/m:DisplayName', $namespaceManager)
+    Assert-True -Because 'MSIX_DISPLAY_NAME must reach Package/Properties/DisplayName' `
+        -Condition ($environmentDisplayName.InnerText -eq $environmentIdentityValues.MSIX_DISPLAY_NAME)
+
+    $environmentVisualElements = $environmentManifest.SelectSingleNode('/m:Package/m:Applications/m:Application/uap:VisualElements', $namespaceManager)
+    Assert-True -Because 'MSIX_DISPLAY_NAME must also name the app in the Start menu and app list' `
+        -Condition ($environmentVisualElements.GetAttribute('DisplayName') -eq $environmentIdentityValues.MSIX_DISPLAY_NAME)
+
+    Assert-True -Because 'an identity fully supplied by the repository variables must not warn about the placeholder' `
+        -Condition (-not $fromEnvironment.Warnings.Contains('placeholder Store identity'))
+
+    # Description is not part of the Store identity, so it still falls back to the file.
+    $environmentDescription = $environmentVisualElements.GetAttribute('Description')
     Assert-True -Because 'a value with no override must still come from the repository identity file' `
-        -Condition ($environmentDisplayName.InnerText -eq $storeIdentity.displayName)
+        -Condition ($environmentDescription -eq $storeIdentity.description)
+
+    # An explicit parameter is the highest-precedence source, above the CI repository variable.
+    $parameterWins = Invoke-BuildScript -OutputName 'parameter-precedence' -Environment $environmentIdentityValues -Parameter @{
+        PublishDirectory = $publishDirectory
+        Version = '3.2.0'
+        PublisherDisplayName = 'Explicit Parameter Publisher'
+    }
+    $parameterWinsManifest = [xml] (Get-Content -Raw -LiteralPath $parameterWins.Manifest)
+    $parameterWinsPublisherDisplayName = $parameterWinsManifest.SelectSingleNode('/m:Package/m:Properties/m:PublisherDisplayName', $namespaceManager)
+    Assert-True -Because '-PublisherDisplayName must win over MSIX_PUBLISHER_DISPLAY_NAME' `
+        -Condition ($parameterWinsPublisherDisplayName.InnerText -eq 'Explicit Parameter Publisher')
+
+    # --- The placeholder gate -------------------------------------------------------------
+    # An official release must never quietly ship the committed placeholder identity: that is
+    # exactly how PublisherDisplayName reached Partner Center as the placeholder and had the
+    # upload rejected.
+    $placeholderMessage = Get-BuildError -OutputName 'reject-placeholder' -Parameter @{
+        PublishDirectory = $publishDirectory
+        Version = '1.0.0'
+    }
+    Assert-True -Because "a build with no Store identity supplied must fail, got: $placeholderMessage" `
+        -Condition ($null -ne $placeholderMessage)
+    foreach ($required in @('MSIX_IDENTITY_NAME', 'MSIX_PUBLISHER', 'MSIX_PUBLISHER_DISPLAY_NAME', 'MSIX_DISPLAY_NAME')) {
+        Assert-Contains -Because 'the placeholder failure must name every missing Store identity variable' `
+            -Haystack $placeholderMessage -Needle $required
+    }
+    Assert-Contains -Because 'the placeholder failure must say how to build locally anyway' `
+        -Haystack $placeholderMessage -Needle 'AllowPlaceholderIdentity'
+
+    # A partially supplied identity is the dangerous case: the package builds, looks right in
+    # three fields, and is rejected on the fourth.
+    $partialMessage = Get-BuildError -OutputName 'reject-partial' -Environment @{
+        MSIX_PUBLISHER_DISPLAY_NAME = 'vitorhugo-example'
+    } -Parameter @{
+        PublishDirectory = $publishDirectory
+        Version = '1.0.0'
+    }
+    Assert-True -Because "a partially supplied Store identity must fail, got: $partialMessage" `
+        -Condition ($null -ne $partialMessage)
+    foreach ($required in @('MSIX_IDENTITY_NAME', 'MSIX_PUBLISHER', 'MSIX_DISPLAY_NAME')) {
+        Assert-Contains -Because 'a partial failure must name the variables that are still missing' `
+            -Haystack $partialMessage -Needle $required
+    }
+    Assert-True -Because "a variable that was supplied must not be reported as missing, got: $partialMessage" `
+        -Condition ($null -ne $partialMessage -and -not $partialMessage.Contains('MSIX_PUBLISHER_DISPLAY_NAME'))
+
+    # GitHub renders an unset `vars.X` as an empty string rather than leaving the variable
+    # unset, so an empty value has to count as missing.
+    $emptyMessage = Get-BuildError -OutputName 'reject-empty' -Environment @{
+        MSIX_IDENTITY_NAME = ''
+        MSIX_PUBLISHER = ''
+        MSIX_PUBLISHER_DISPLAY_NAME = ''
+        MSIX_DISPLAY_NAME = ''
+    } -Parameter @{
+        PublishDirectory = $publishDirectory
+        Version = '1.0.0'
+    }
+    Assert-True -Because "empty repository variables must count as missing, got: $emptyMessage" `
+        -Condition ($null -ne $emptyMessage -and $emptyMessage.Contains('MSIX_PUBLISHER_DISPLAY_NAME'))
+
+    # Local development stays possible, but only by asking for it.
+    $localBuild = Invoke-BuildScript -OutputName 'local-placeholder' -Parameter @{
+        PublishDirectory = $publishDirectory
+        Version = '1.0.0'
+        AllowPlaceholderIdentity = $true
+    }
+    Assert-True -Because '-AllowPlaceholderIdentity must still produce a package for local testing' `
+        -Condition (Test-Path -LiteralPath (Join-Path $localBuild.OutputDirectory 'SonicRelay.WindowsPublisher-win-x64-1.0.0.msix'))
+    Assert-Contains -Because '-AllowPlaceholderIdentity must warn that the package is not submittable' `
+        -Haystack $localBuild.Warnings -Needle 'placeholder Store identity'
 
     # --- Opting out of the upload container ---------------------------------------------
     $packageOnly = Invoke-BuildScript -OutputName 'package-only' -Parameter @{
         PublishDirectory = $publishDirectory
         Version = '1.0.0'
         SkipUploadPackage = $true
+        AllowPlaceholderIdentity = $true
     }
     Assert-True -Because '-SkipUploadPackage must still produce the .msix' `
         -Condition (Test-Path -LiteralPath (Join-Path $packageOnly.OutputDirectory 'SonicRelay.WindowsPublisher-win-x64-1.0.0.msix'))
@@ -311,6 +405,7 @@ try {
     $noSymbols = Invoke-BuildScript -OutputName 'no-symbols' -Parameter @{
         PublishDirectory = New-PublishDirectory -Name 'publish-embedded-symbols' -WithoutSymbols
         Version = '1.0.0'
+        AllowPlaceholderIdentity = $true
     }
     Assert-True -Because 'a publish with embedded symbols must still produce a .msixupload' `
         -Condition (Test-Path -LiteralPath (Join-Path $noSymbols.OutputDirectory 'SonicRelay.WindowsPublisher-win-x64-1.0.0.msixupload'))
@@ -330,6 +425,7 @@ try {
         $message = Get-BuildError -OutputName "reject-$($rejected.Key -replace '\.', '-')" -Parameter @{
             PublishDirectory = $publishDirectory
             Version = $rejected.Key
+            AllowPlaceholderIdentity = $true
         }
 
         Assert-True -Because "version '$($rejected.Key)' must be rejected, got: $message" `
@@ -341,6 +437,7 @@ try {
         PublishDirectory = $publishDirectory
         Version = '1.0.0'
         Publisher = 'SonicRelay'
+        AllowPlaceholderIdentity = $true
     }
     Assert-True -Because "a publisher that is not a distinguished name must be rejected, got: $publisherMessage" `
         -Condition ($null -ne $publisherMessage -and $publisherMessage.Contains('distinguished name'))
@@ -349,6 +446,7 @@ try {
         PublishDirectory = $publishDirectory
         Version = '1.0.0'
         IdentityName = 'Sonic Relay!'
+        AllowPlaceholderIdentity = $true
     }
     Assert-True -Because "an invalid package identity name must be rejected, got: $identityNameMessage" `
         -Condition ($null -ne $identityNameMessage -and $identityNameMessage.Contains('valid Store package name'))

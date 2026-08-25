@@ -19,6 +19,12 @@
                     Partner Center Packages page wants when crash analytics should be able
                     to symbolicate. Suppress it with -SkipUploadPackage.
 
+    The four Store identity values - Identity/Name, Identity/Publisher,
+    Properties/PublisherDisplayName and Properties/DisplayName - must match what Partner
+    Center reserved for SonicRelay character for character. They come from the MSIX_*
+    repository variables in CI; falling back to the committed placeholders is an error unless
+    -AllowPlaceholderIdentity says this is a local test build.
+
     Packages destined for the Store are deliberately left unsigned - the Store re-signs
     every package it ingests with its own certificate, and a package signed by someone else
     is rejected. Signing here is only for local install/update/uninstall validation, where
@@ -63,6 +69,10 @@ param(
     # Explicit tool paths win over discovery; the tests use them to inject fakes.
     [string] $MakeAppxPath,
     [string] $SignToolPath,
+
+    # Build on the committed placeholder identity instead of failing. Local sideload testing
+    # only: Partner Center rejects a package built this way.
+    [switch] $AllowPlaceholderIdentity,
 
     # Local validation only. A Store upload must stay unsigned.
     [string] $CertificatePath,
@@ -144,16 +154,29 @@ function Get-JsonValue {
 function Resolve-IdentityValue {
     param([string] $Explicit, [string] $EnvironmentVariable, [psobject] $Identity, [string] $JsonName)
 
+    $source = [pscustomobject]@{
+        Value = $null
+        Source = 'IdentityFile'
+        EnvironmentVariable = $EnvironmentVariable
+    }
+
     if ($Explicit) {
-        return [pscustomobject]@{ Value = $Explicit; IsOverride = $true }
+        $source.Value = $Explicit
+        $source.Source = 'Parameter'
+        return $source
     }
 
+    # GitHub renders an unset `vars.X` as an empty string rather than omitting the variable,
+    # so whitespace counts as "not supplied" and falls through to the identity file.
     $fromEnvironment = [Environment]::GetEnvironmentVariable($EnvironmentVariable)
-    if ($fromEnvironment) {
-        return [pscustomobject]@{ Value = $fromEnvironment; IsOverride = $true }
+    if (-not [string]::IsNullOrWhiteSpace($fromEnvironment)) {
+        $source.Value = $fromEnvironment
+        $source.Source = 'Environment'
+        return $source
     }
 
-    return [pscustomobject]@{ Value = (Get-JsonValue $Identity $JsonName); IsOverride = $false }
+    $source.Value = Get-JsonValue $Identity $JsonName
+    return $source
 }
 
 function Resolve-StoreIdentity {
@@ -187,12 +210,28 @@ function Resolve-StoreIdentity {
         throw "Package publisher '$($resolved.Publisher)' must be a distinguished name, for example 'CN=...'."
     }
 
-    # Non-fatal on purpose: a placeholder identity still produces a package that is useful
-    # for sideload validation and for exercising this script in CI.
-    $usesPlaceholder = [bool] (Get-JsonValue $identity 'isPlaceholder')
-    $identityIsOverridden = $sources.IdentityName.IsOverride -and $sources.Publisher.IsOverride -and $sources.PublisherDisplayName.IsOverride
-    if ($usesPlaceholder -and -not $identityIsOverridden) {
-        Write-Warning "Building with the placeholder Store identity from $identityPath. Partner Center will reject this package; see docs/microsoft-store-package.md."
+    # Partner Center matches Identity/Name, Identity/Publisher, PublisherDisplayName and the
+    # reserved DisplayName character for character against the values reserved for the app, so
+    # any one of them still coming from the committed placeholder makes the upload fail. That
+    # is checked per value rather than all-or-nothing: a package where only
+    # PublisherDisplayName was left behind is exactly the one the Store rejected.
+    if (Get-JsonValue $identity 'isPlaceholder') {
+        $placeholders = @('IdentityName', 'Publisher', 'PublisherDisplayName', 'DisplayName' |
+            Where-Object { $sources[$_].Source -eq 'IdentityFile' })
+
+        if ($placeholders.Count -gt 0) {
+            $missingVariables = @($placeholders | ForEach-Object { $sources[$_].EnvironmentVariable })
+
+            if (-not $AllowPlaceholderIdentity) {
+                throw (@(
+                    "Store identity still comes from the placeholders in $identityPath for: $($placeholders -join ', ')."
+                    "Partner Center rejects a package built with placeholder identity values."
+                    "Set the repository variable(s) $($missingVariables -join ', ') (Settings > Secrets and variables > Actions > Variables), pass the matching parameter(s), or pass -AllowPlaceholderIdentity to build an unsubmittable package for local testing. See docs/microsoft-store-package.md."
+                ) -join ' ')
+            }
+
+            Write-Warning "Building with the placeholder Store identity from $identityPath for: $($placeholders -join ', '). Partner Center will reject this package; see docs/microsoft-store-package.md."
+        }
     }
 
     return $resolved

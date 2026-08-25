@@ -248,10 +248,10 @@ jobs:
     timeout-minutes: 45
     env:
       # The identity reserved for SonicRelay in the Partner Center. Repository variables, not
-      # secrets: the package identity is public, it is printed on the Store listing. With
-      # these unset the packaging script falls back to the placeholder identity in
-      # packaging/windows/msix/store-identity.json and warns, so the job still proves the
-      # pipeline works before an account exists.
+      # secrets: the package identity is public, it is printed on the Store listing. All four
+      # are required for a v* tag - see the identity step below - and optional for the
+      # prerelease builds, which may fall back to the placeholders so the job still proves the
+      # pipeline works.
       MSIX_IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
       MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
       MSIX_PUBLISHER_DISPLAY_NAME: ${{ vars.MSIX_PUBLISHER_DISPLAY_NAME }}
@@ -263,6 +263,32 @@ jobs:
         with:
           # Same commit the Windows job just built and released.
           ref: ${{ needs.build-test-and-release.outputs.target-sha }}
+
+      # Before the publish, not after it: a release that cannot produce a submittable package
+      # should say so in seconds and name the variable to set.
+      - name: Verify the reserved Store identity is configured
+        id: identity
+        shell: pwsh
+        run: |
+          $required = @('MSIX_IDENTITY_NAME', 'MSIX_PUBLISHER', 'MSIX_PUBLISHER_DISPLAY_NAME', 'MSIX_DISPLAY_NAME')
+          $missing = @($required | Where-Object { [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_)) })
+
+          if ($missing.Count -eq 0) {
+            "allow-placeholder=false" >> $env:GITHUB_OUTPUT
+            Write-Host "Store identity supplied by the repository variables: $($required -join ', ')."
+            exit 0
+          }
+
+          # A v* tag is an official release: its .msixupload is the artifact submitted to
+          # Partner Center, which matches the reserved identity character for character and
+          # rejects a package that carries a placeholder in any one field.
+          if ('${{ github.ref_type }}' -eq 'tag') {
+            Write-Host "::error::Missing Microsoft Store identity repository variable(s): $($missing -join ', '). Set them under Settings > Secrets and variables > Actions > Variables to the values reserved for SonicRelay in the Partner Center (App management > Product identity), then re-run this release. See docs/microsoft-store-package.md."
+            exit 1
+          }
+
+          Write-Host "::warning::Missing Microsoft Store identity repository variable(s): $($missing -join ', '). This prerelease build falls back to the placeholder identity in packaging/windows/msix/store-identity.json, so its package cannot be submitted to Partner Center."
+          "allow-placeholder=true" >> $env:GITHUB_OUTPUT
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v4
@@ -278,10 +304,19 @@ jobs:
       - name: Build Microsoft Store MSIX package
         shell: pwsh
         run: |
-          ./packaging/windows/Build-MsixPackage.ps1 `
-            -PublishDirectory artifacts/publish/store-win-x64 `
-            -Version '${{ needs.build-test-and-release.outputs.store-version }}' `
-            -OutputDirectory artifacts/store
+          $arguments = @{
+            PublishDirectory = 'artifacts/publish/store-win-x64'
+            Version = '${{ needs.build-test-and-release.outputs.store-version }}'
+            OutputDirectory = 'artifacts/store'
+          }
+
+          # Only ever set for a prerelease whose identity variables are unset; the packaging
+          # script fails on a placeholder identity without it.
+          if ('${{ steps.identity.outputs.allow-placeholder }}' -eq 'true') {
+            $arguments.AllowPlaceholderIdentity = $true
+          }
+
+          ./packaging/windows/Build-MsixPackage.ps1 @arguments
 
       # Kept as a workflow artifact too, so the package is available while the release
       # assets are still being attached; store-release-assets publishes it to the release.
