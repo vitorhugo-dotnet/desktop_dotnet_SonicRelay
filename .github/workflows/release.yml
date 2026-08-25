@@ -24,6 +24,7 @@ jobs:
       version: ${{ steps.release.outputs.version }}
       target-sha: ${{ steps.release.outputs.target-sha }}
       prerelease: ${{ steps.release.outputs.prerelease }}
+      store-version: ${{ steps.release.outputs.store-version }}
 
     steps:
       - name: Check out repository
@@ -87,6 +88,14 @@ jobs:
           }
           $msiVersion = "$($versionParts[0]).$($versionParts[1]).$($versionParts[2])"
 
+          # The Store rejects package version 0.0.0.0, which is exactly what the alpha and
+          # manual prerelease versions above collapse to. Borrow the run number so the Store
+          # packaging job still builds a valid - and monotonically increasing - package.
+          $storeVersion = $msiVersion
+          if ($storeVersion -eq '0.0.0') {
+            $storeVersion = "0.0.$([Math]::Max(1, [int]$runNumber % 65536))"
+          }
+
           # The commit actually checked out (the PR head for an alpha build), used as the
           # release target so the tag points at exactly what was built.
           $targetSha = (git rev-parse HEAD).Trim()
@@ -94,6 +103,7 @@ jobs:
           "tag=$tag" >> $env:GITHUB_OUTPUT
           "version=$version" >> $env:GITHUB_OUTPUT
           "msi-version=$msiVersion" >> $env:GITHUB_OUTPUT
+          "store-version=$storeVersion" >> $env:GITHUB_OUTPUT
           "prerelease=$prerelease" >> $env:GITHUB_OUTPUT
           "target-sha=$targetSha" >> $env:GITHUB_OUTPUT
           "pr-number=$prNumber" >> $env:GITHUB_OUTPUT
@@ -228,6 +238,61 @@ jobs:
             -Title $title `
             -Asset $assets `
             -ExtraArgument $extraArgs
+
+  store-package:
+    name: Package Microsoft Store MSIX
+    # Runs only after the Windows job's build, tests and release succeeded, so a Store
+    # artifact never exists for a commit that did not pass the release gate.
+    needs: build-test-and-release
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      # The identity reserved for SonicRelay in the Partner Center. Repository variables, not
+      # secrets: the package identity is public, it is printed on the Store listing. With
+      # these unset the packaging script falls back to the placeholder identity in
+      # packaging/windows/msix/store-identity.json and warns, so the job still proves the
+      # pipeline works before an account exists.
+      MSIX_IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
+      MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
+      MSIX_PUBLISHER_DISPLAY_NAME: ${{ vars.MSIX_PUBLISHER_DISPLAY_NAME }}
+      MSIX_DISPLAY_NAME: ${{ vars.MSIX_DISPLAY_NAME }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          # Same commit the Windows job just built and released.
+          ref: ${{ needs.build-test-and-release.outputs.target-sha }}
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Publish Windows x64 app for packaging
+        run: >-
+          dotnet publish src/SonicRelay.Windows.Desktop/SonicRelay.Windows.Desktop.csproj
+          --configuration Release --runtime win-x64 --self-contained true
+          --output artifacts/publish/store-win-x64
+
+      - name: Build Microsoft Store MSIX package
+        shell: pwsh
+        run: |
+          ./packaging/windows/Build-MsixPackage.ps1 `
+            -PublishDirectory artifacts/publish/store-win-x64 `
+            -Version '${{ needs.build-test-and-release.outputs.store-version }}' `
+            -OutputDirectory artifacts/store
+
+      # Deliberately not attached to the GitHub Release: the package is unsigned, because the
+      # Store re-signs what it ingests and rejects anything signed by someone else, so Windows
+      # would refuse to install it. Its only destination is the Partner Center Packages page.
+      - name: Upload Microsoft Store package
+        uses: actions/upload-artifact@v4
+        with:
+          name: store-package-${{ needs.build-test-and-release.outputs.version }}
+          path: artifacts/store/*
+          if-no-files-found: error
+          retention-days: 30
 
   linux-package:
     name: Package Linux release assets

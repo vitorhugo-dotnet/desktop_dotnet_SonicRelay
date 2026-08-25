@@ -1,0 +1,27 @@
+{
+  "$comment": [
+    "Microsoft Store package identity for the MSIX built by packaging/windows/Build-MsixPackage.ps1.",
+    "",
+    "PLACEHOLDERS. The values below let the package build and sideload-install locally, but",
+    "Partner Center will reject an upload until they are replaced with the identity reserved",
+    "for SonicRelay under Product identity in the Partner Center (App management > Product",
+    "identity). Copy them verbatim - identityName, publisher and publisherDisplayName must",
+    "match character for character.",
+    "",
+    "  identityName          -> 'Package/Identity/Name'          e.g. 12345SonicRelay.SonicRelay",
+    "  publisher             -> 'Package/Identity/Publisher'     e.g. CN=A1B2C3D4-1234-5678-90AB-CDEF12345678",
+    "  publisherDisplayName  -> 'Package/Properties/PublisherDisplayName'",
+    "  displayName           -> the reserved app name shown in the Store, Start menu and app list",
+    "",
+    "Every value can be overridden without a commit through the matching environment",
+    "variable - MSIX_IDENTITY_NAME, MSIX_PUBLISHER, MSIX_PUBLISHER_DISPLAY_NAME,",
+    "MSIX_DISPLAY_NAME, MSIX_DESCRIPTION - which the release workflows read from the",
+    "repository variables of the same name. See docs/microsoft-store-package.md."
+  ],
+  "identityName": "SonicRelay.WindowsPublisher",
+  "publisher": "CN=SonicRelay",
+  "publisherDisplayName": "SonicRelay",
+  "displayName": "SonicRelay",
+  "description": "Capture desktop audio and publish it to SonicRelay viewers.",
+  "isPlaceholder": true
+}

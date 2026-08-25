@@ -44,6 +44,14 @@ $requiredPaths = @(
     'packaging/macos/SonicRelay.entitlements'
     '.github/scripts/import-macos-certificate.sh'
     '.github/scripts/publish-macos-assets.sh'
+    'docs/microsoft-store-package.md'
+    'packaging/windows/Build-MsixPackage.ps1'
+    'packaging/windows/msix/AppxManifest.template.xml'
+    'packaging/windows/msix/store-identity.json'
+    'packaging/windows/msix/Assets/StoreLogo.png'
+    'packaging/windows/msix/Assets/Square44x44Logo.png'
+    'packaging/windows/msix/Assets/Square150x150Logo.png'
+    'tests/Build-MsixPackage.Tests.ps1'
 )
 
 $missingPaths = $requiredPaths | Where-Object {
@@ -94,6 +102,69 @@ if ($readme -notmatch '\(docs/linux-publisher\.md\)') {
 
 if ($readme -notmatch '\(docs/macos-publisher\.md\)') {
     Write-Error 'README.md must link to docs/macos-publisher.md.'
+}
+
+if ($readme -notmatch '\(docs/microsoft-store-package\.md\)') {
+    Write-Error 'README.md must link to docs/microsoft-store-package.md.'
+}
+
+# The Store submission fails on things nobody can guess from the repository: the reserved
+# Partner Center identity, the Store-only version rules, that the uploaded package must stay
+# unsigned, and the manual gates (WACK, clean install, update, uninstall). Keep the
+# documentation covering all of them.
+$storePackage = Get-Content -Raw -LiteralPath (Join-Path $root 'docs/microsoft-store-package.md')
+$requiredStoreTopics = @(
+    'Partner Center'
+    'msixupload'
+    'appxsym'
+    'Identity/Publisher'
+    'PublisherDisplayName'
+    'store-identity.json'
+    'MSIX_IDENTITY_NAME'
+    'Windows.Desktop'
+    'Windows.FullTrustApplication'
+    'runFullTrust'
+    'microphone'
+    'MakeAppx'
+    'Windows App Certification Kit'
+    'Add-AppxPackage'
+    'Remove-AppxPackage'
+    'unsigned'
+    'x64'
+)
+$missingStoreTopics = $requiredStoreTopics | Where-Object {
+    $storePackage.IndexOf($_, [StringComparison]::OrdinalIgnoreCase) -lt 0
+}
+if ($missingStoreTopics.Count -gt 0) {
+    Write-Error "Microsoft Store packaging documentation is missing required topics:`n$($missingStoreTopics -join "`n")"
+}
+
+# The manifest is what the Store validates. These four decisions are the ones that would
+# silently change the submission's meaning: the device family it is offered to, the full-trust
+# entry point a Win32 app needs, the single capability it asks for, and the placeholders the
+# build script substitutes.
+$appxManifestTemplate = Get-Content -Raw -LiteralPath (Join-Path $root 'packaging/windows/msix/AppxManifest.template.xml')
+$requiredManifestFragments = @(
+    'Name="Windows.Desktop"'
+    'EntryPoint="Windows.FullTrustApplication"'
+    '<rescap:Capability Name="runFullTrust" />'
+    '{{IdentityName}}'
+    '{{Publisher}}'
+    '{{Version}}'
+    '{{PublisherDisplayName}}'
+)
+$missingManifestFragments = $requiredManifestFragments | Where-Object {
+    $appxManifestTemplate.IndexOf($_, [StringComparison]::Ordinal) -lt 0
+}
+if ($missingManifestFragments.Count -gt 0) {
+    Write-Error "MSIX manifest template is missing required declarations:`n$($missingManifestFragments -join "`n")"
+}
+
+# SonicRelay never opens a capture endpoint (docs/two-way-audio.md), so the package must not
+# ask users to consent to one. A <Capability> element for it would do exactly that; the
+# comment in the template explaining the omission must not.
+if ($appxManifestTemplate -match '(?i)Capability\s+Name="[a-z]*microphone') {
+    Write-Error 'The MSIX manifest declares a microphone capability; SonicRelay captures the system output mix, never a microphone.'
 }
 
 # macOS system audio capture is gated behind the Screen Recording (TCC) grant and
@@ -295,6 +366,8 @@ if (Test-Path -LiteralPath $workflowPath) {
         'Linux startup smoke test' = 'xvfb-run'
         'macOS startup smoke test' = 'packaging/macos/build-app-bundle\.sh'
         'macOS packaging job' = '(?m)^\s*package-release-macos:\s*$'
+        'Microsoft Store packaging test' = 'tests/Build-MsixPackage\.Tests\.ps1'
+        'Microsoft Store MSIX build' = 'packaging/windows/Build-MsixPackage\.ps1'
     }
 
     $missingWorkflowRequirements = $requiredWorkflowPatterns.GetEnumerator() | Where-Object {
@@ -386,6 +459,8 @@ if (Test-Path -LiteralPath $releaseWorkflowPath) {
         'macOS arm64 publish' = '(?s)dotnet publish src/SonicRelay\.Windows\.Desktop/SonicRelay\.Windows\.Desktop\.csproj.*?osx-arm64'
         'macOS app bundle build script' = 'packaging/macos/build-app-bundle\.sh'
         'macOS asset publishing script' = '\.github/scripts/publish-macos-assets\.sh'
+        'Microsoft Store packaging job' = '(?m)^\s*store-package:\s*$'
+        'Microsoft Store MSIX build' = 'packaging/windows/Build-MsixPackage\.ps1'
     }
 
     $missingReleaseWorkflowRequirements = $requiredReleaseWorkflowPatterns.GetEnumerator() | Where-Object {

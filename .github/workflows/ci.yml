@@ -58,6 +58,10 @@ jobs:
         shell: pwsh
         run: ./tests/Publish-GitHubRelease.Tests.ps1
 
+      - name: Run Microsoft Store packaging tests
+        shell: pwsh
+        run: ./tests/Build-MsixPackage.Tests.ps1
+
       - name: Run gh retry helper tests
         if: matrix.os == 'ubuntu-24.04'
         shell: bash
@@ -222,10 +226,18 @@ jobs:
           $msiVersion = "$($versionParts[0]).$($versionParts[1]).$($versionParts[2])"
           $isPrerelease = if ($displayVersion -match '-' -or -not $tagName.StartsWith('v')) { 'true' } else { 'false' }
 
+          # The Store rejects package version 0.0.0.0. Borrow the run number so the MSIX step
+          # still builds a valid package for a version that would collapse to zeros.
+          $storeVersion = $msiVersion
+          if ($storeVersion -eq '0.0.0') {
+            $storeVersion = "0.0.$([Math]::Max(1, [int]$runNumber % 65536))"
+          }
+
           "tag_name=$tagName" >> $env:GITHUB_OUTPUT
           "display_version=$displayVersion" >> $env:GITHUB_OUTPUT
           "asset_version=$assetVersion" >> $env:GITHUB_OUTPUT
           "msi_version=$msiVersion" >> $env:GITHUB_OUTPUT
+          "store_version=$storeVersion" >> $env:GITHUB_OUTPUT
           "is_prerelease=$isPrerelease" >> $env:GITHUB_OUTPUT
 
       - name: Restore dependencies
@@ -331,11 +343,40 @@ jobs:
           - Packages are currently unsigned.
           "@ | Set-Content -Path (Join-Path $distDir 'RELEASE-NOTES.md') -Encoding UTF8
 
+      # The Microsoft Store package (issue #66). Built here as well as in release.yml so a
+      # change that breaks Store packaging fails on the next push to main rather than at
+      # submission time. See docs/microsoft-store-package.md.
+      - name: Build Microsoft Store MSIX package
+        shell: pwsh
+        env:
+          # Repository variables, not secrets: the package identity is public. Unset falls
+          # back to the placeholder identity in packaging/windows/msix/store-identity.json.
+          MSIX_IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
+          MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
+          MSIX_PUBLISHER_DISPLAY_NAME: ${{ vars.MSIX_PUBLISHER_DISPLAY_NAME }}
+          MSIX_DISPLAY_NAME: ${{ vars.MSIX_DISPLAY_NAME }}
+        run: |
+          ./packaging/windows/Build-MsixPackage.ps1 `
+            -PublishDirectory (Join-Path $env:GITHUB_WORKSPACE 'artifacts/publish/portable') `
+            -Version '${{ steps.metadata.outputs.store_version }}' `
+            -OutputDirectory (Join-Path $env:GITHUB_WORKSPACE 'artifacts/store')
+
       - name: Upload packaged assets
         uses: actions/upload-artifact@v4
         with:
           name: windows-release-assets-${{ steps.metadata.outputs.asset_version }}
           path: artifacts/release/*
+          if-no-files-found: error
+          retention-days: 30
+
+      # Kept out of the GitHub Release: the package is unsigned, because the Store re-signs
+      # what it ingests, so Windows would refuse to install it. Its only destination is the
+      # Partner Center Packages page.
+      - name: Upload Microsoft Store package
+        uses: actions/upload-artifact@v4
+        with:
+          name: store-package-${{ steps.metadata.outputs.asset_version }}
+          path: artifacts/store/*
           if-no-files-found: error
           retention-days: 30
 
