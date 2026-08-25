@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       release_version:
-        description: 'Optional release version, for example 0.1.0. Empty creates a dev release.'
+        description: 'Optional release version, for example 0.1.0. Empty uses 0.0.0.<build number>.'
         required: false
         type: string
 
@@ -211,10 +211,13 @@ jobs:
             $tagName = if ($manualVersion.StartsWith('v')) { $manualVersion } else { "v$manualVersion" }
           }
           else {
-            $tagName = "dev-$runNumber"
+            # Keep the CI build number as the fourth component. It is build/revision
+            # metadata for this desktop product, not a semantic-version patch number.
+            $buildVersion = "0.0.0.$runNumber"
+            $tagName = "v$buildVersion"
           }
 
-          $displayVersion = if ($tagName.StartsWith('v')) { $tagName.Substring(1) } else { "0.0.$runNumber" }
+          $displayVersion = if ($tagName.StartsWith('v')) { $tagName.Substring(1) } else { $tagName }
           $assetVersion = $displayVersion -replace '[^0-9A-Za-z.-]', '-'
           $msiVersionBase = ($displayVersion -split '[+-]')[0]
           $versionParts = @($msiVersionBase.Split('.') | Where-Object { $_ -match '^\d+$' })
@@ -225,6 +228,13 @@ jobs:
 
           $msiVersion = "$($versionParts[0]).$($versionParts[1]).$($versionParts[2])"
           $isPrerelease = if ($displayVersion -match '-' -or -not $tagName.StartsWith('v')) { 'true' } else { 'false' }
+
+          # MSI ProductVersion supports only three components. Preserve the four-component
+          # public build version in the release/tag while mapping the CI build to MSI's
+          # third component, which must also be non-zero.
+          if ($displayVersion -eq "0.0.0.$runNumber") {
+            $msiVersion = "0.0.$([Math]::Max(1, [int]$runNumber % 65536))"
+          }
 
           # The Store rejects package version 0.0.0.0. Borrow the run number so the MSIX step
           # still builds a valid package for a version that would collapse to zeros.
@@ -450,6 +460,9 @@ jobs:
           if ('${{ steps.metadata.outputs.is_prerelease }}' -eq 'true') {
             $extraArguments += '--prerelease'
           }
+          else {
+            $extraArguments += '--latest'
+          }
 
           # Retries transient GitHub API 5xx responses instead of failing a build whose
           # packages were all produced successfully.
@@ -471,6 +484,30 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Remove legacy dev releases and tags
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          # shellcheck source=.github/scripts/gh-retry.sh
+          source .github/scripts/gh-retry.sh
+
+          retry_gh gh release list --limit 1000 --json tagName --jq \
+            '.[] | select(.tagName | startswith("dev-")) | .tagName' |
+            while IFS= read -r legacyTag; do
+              test -n "$legacyTag" || continue
+              retry_gh gh release delete "$legacyTag" --cleanup-tag --yes
+            done
+
+          # Remove any dev-* tag that did not have a corresponding GitHub Release.
+          retry_gh gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/dev-" \
+            --jq '.[].ref' |
+            while IFS= read -r legacyRef; do
+              test -n "$legacyRef" || continue
+              retry_gh gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/$legacyRef"
+            done
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v4

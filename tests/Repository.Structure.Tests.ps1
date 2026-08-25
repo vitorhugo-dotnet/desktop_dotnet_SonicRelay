@@ -374,6 +374,10 @@ if (Test-Path -LiteralPath $workflowPath) {
         # Partner Center submission is made from outlive the workflow run.
         'Microsoft Store package on the release' = '(?s)\$assetPaths = @\(.*?artifacts/store'
         'Microsoft Store package in the checksums' = "(?s)checksums-sha256\.txt.*?'\.msix', '\.msixupload'"
+        'CI build version uses fourth component' = '\$buildVersion\s*=\s*"0\.0\.0\.\$runNumber"'
+        'CI build tag uses version prefix' = '\$tagName\s*=\s*"v\$buildVersion"'
+        'normal releases marked latest' = "\$extraArguments \+= '--latest'"
+        'legacy dev release cleanup' = 'gh release delete.*--cleanup-tag.*--yes'
     }
 
     $missingWorkflowRequirements = $requiredWorkflowPatterns.GetEnumerator() | Where-Object {
@@ -382,6 +386,10 @@ if (Test-Path -LiteralPath $workflowPath) {
 
     if ($missingWorkflowRequirements.Count -gt 0) {
         Write-Error "Missing CI workflow requirements:`n$($missingWorkflowRequirements -join "`n")"
+    }
+
+    if ($workflow -match '\$tagName\s*=\s*"dev-') {
+        Write-Error 'CI workflow must not create dev-* tags.'
     }
 
     $unsafeReleaseNoteFragments = @(
