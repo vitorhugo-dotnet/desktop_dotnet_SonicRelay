@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Package manifest template for the Microsoft Store MSIX (issue #66).
+
+  The double-brace placeholders below are substituted by
+  packaging/windows/Build-MsixPackage.ps1, which fails the build if any is left
+  unresolved; the file is never used as-is. Identity/Name, Identity/Publisher and
+  PublisherDisplayName must match the values reserved for SonicRelay in the Microsoft
+  Partner Center exactly, or the Packages page rejects the upload; see
+  packaging/windows/msix/store-identity.json and docs/microsoft-store-package.md.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap rescap">
+
+  <Identity
+    Name="{{IdentityName}}"
+    Publisher="{{Publisher}}"
+    Version="{{Version}}"
+    ProcessorArchitecture="{{ProcessorArchitecture}}" />
+
+  <Properties>
+    <DisplayName>{{DisplayName}}</DisplayName>
+    <PublisherDisplayName>{{PublisherDisplayName}}</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <!-- Windows.Desktop, not Windows.Universal: this is a full-trust Win32 (Avalonia)
+         app packaged with the desktop bridge, so it must not be offered to device
+         families it cannot run on. 10.0.17763.0 (1809) is the oldest Windows 10 build
+         the Store still accepts for MSIX. -->
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <Application Id="SonicRelayWindowsPublisher" Executable="{{ExecutableName}}" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="{{DisplayName}}"
+        Description="{{Description}}"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile
+          Square71x71Logo="Assets\Square71x71Logo.png"
+          Square310x310Logo="Assets\Square310x310Logo.png"
+          Wide310x150Logo="Assets\Wide310x150Logo.png" />
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!--
+      runFullTrust is the only capability SonicRelay declares, and it is the only one it
+      needs. A full-trust desktop package does not run in an AppContainer, so the
+      capability list does not gate what it may do: the outbound HTTPS/WSS to the backend
+      and signaling, the UDP/TCP of WebRTC and STUN/TURN, and the WASAPI *render*-endpoint
+      loopback capture all work under runFullTrust alone.
+
+      Deliberately NOT declared:
+      - microphone: SonicRelay never opens a capture endpoint. What it shares is the
+        system output mix, in both broadcast and duplex sessions (docs/two-way-audio.md).
+        Declaring it would ask users for consent the app has no use for.
+      - internetClient / privateNetworkClientServer: AppContainer network capabilities,
+        inert for a full-trust package and flagged by review as unused.
+    -->
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>
