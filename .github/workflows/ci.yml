@@ -361,6 +361,50 @@ jobs:
             -Version '${{ steps.metadata.outputs.store_version }}' `
             -OutputDirectory (Join-Path $env:GITHUB_WORKSPACE 'artifacts/store')
 
+      # The MSIX ships on the release as well: it is the artifact a Partner Center submission
+      # is made from, and a workflow artifact expires. It stays unsigned - the Store re-signs
+      # what it ingests and rejects anything signed by someone else - so the notes say what it
+      # is and is not good for.
+      - name: Add the Store package to the release checksums and notes
+        shell: pwsh
+        run: |
+          $distDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts/release'
+          $storeDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts/store'
+          $storeVersion = '${{ steps.metadata.outputs.store_version }}'
+
+          $storePackages = @(
+            Get-ChildItem -Path $storeDir -File |
+              Where-Object { $_.Extension -in @('.msix', '.msixupload') } |
+              Sort-Object -Property Name
+          )
+
+          if ($storePackages.Count -eq 0) {
+            throw "No .msix or .msixupload package was produced in $storeDir."
+          }
+
+          $storePackages | ForEach-Object {
+            $hash = Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256
+            "$($hash.Hash)  $($_.Name)"
+          } | Add-Content -LiteralPath (Join-Path $distDir 'checksums-sha256.txt') -Encoding ASCII
+
+          $lines = @('', '## Microsoft Store package', '')
+          foreach ($package in $storePackages) {
+            if ($package.Extension -eq '.msixupload') {
+              $lines += "- ``$($package.Name)``: what the Partner Center Packages page expects (the ``.msix`` plus its ``.appxsym`` symbols)."
+            } else {
+              $lines += "- ``$($package.Name)``: the x64 Store package itself."
+            }
+          }
+
+          $lines += @(
+            ''
+            'Both are unsigned on purpose: the Microsoft Store re-signs every package it ingests and rejects one signed by anybody else, so Windows refuses to install this `.msix` by double-clicking it. Install from the `.msi` or `.exe` above, or from the Store once the submission is live.'
+            ''
+            "Package version ``$storeVersion`` follows the Store's ``Major.Minor.Build.0`` rule, so it can differ from the release version above. See ``docs/microsoft-store-package.md``."
+          )
+
+          $lines | Add-Content -LiteralPath (Join-Path $distDir 'RELEASE-NOTES.md') -Encoding UTF8
+
       - name: Upload packaged assets
         uses: actions/upload-artifact@v4
         with:
@@ -369,9 +413,9 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # Kept out of the GitHub Release: the package is unsigned, because the Store re-signs
-      # what it ingests, so Windows would refuse to install it. Its only destination is the
-      # Partner Center Packages page.
+      # Kept as a workflow artifact too, alongside the copy the release step attaches to the
+      # GitHub Release, so a build that never publishes a release (a pull request) still
+      # produces a downloadable Store package.
       - name: Upload Microsoft Store package
         uses: actions/upload-artifact@v4
         with:
@@ -392,6 +436,12 @@ jobs:
           $assetPaths = @(
             Get-ChildItem -Path 'artifacts/release' -File |
               Where-Object { $_.Extension -in @('.zip', '.exe', '.msi', '.txt') } |
+              Select-Object -ExpandProperty FullName
+
+            # The Store package: unsigned and not an installer, but the artifact a Partner
+            # Center submission is made from, so it belongs on the release too.
+            Get-ChildItem -Path 'artifacts/store' -File |
+              Where-Object { $_.Extension -in @('.msix', '.msixupload') } |
               Select-Object -ExpandProperty FullName
           )
 

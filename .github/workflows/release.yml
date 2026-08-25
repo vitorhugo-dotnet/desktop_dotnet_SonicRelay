@@ -283,9 +283,8 @@ jobs:
             -Version '${{ needs.build-test-and-release.outputs.store-version }}' `
             -OutputDirectory artifacts/store
 
-      # Deliberately not attached to the GitHub Release: the package is unsigned, because the
-      # Store re-signs what it ingests and rejects anything signed by someone else, so Windows
-      # would refuse to install it. Its only destination is the Partner Center Packages page.
+      # Kept as a workflow artifact too, so the package is available while the release
+      # assets are still being attached; store-release-assets publishes it to the release.
       - name: Upload Microsoft Store package
         uses: actions/upload-artifact@v4
         with:
@@ -432,3 +431,34 @@ jobs:
           RELEASE_TAG: ${{ needs.build-test-and-release.outputs.tag }}
           RELEASE_VERSION: ${{ needs.build-test-and-release.outputs.version }}
         run: .github/scripts/publish-macos-assets.sh
+
+  store-release-assets:
+    name: Attach the Microsoft Store MSIX to the release
+    # The Store package itself is built in parallel by store-package; only the attachment
+    # waits, and it waits on macos-package because linux-package, macos-package and this job
+    # all read-modify-write the same release notes and the same canonical
+    # checksums-sha256.txt, so they must run one after the other.
+    needs: [build-test-and-release, store-package, macos-package]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          # Same commit the Windows job just built and released.
+          ref: ${{ needs.build-test-and-release.outputs.target-sha }}
+
+      - name: Download the Microsoft Store package
+        uses: actions/download-artifact@v4
+        with:
+          name: store-package-${{ needs.build-test-and-release.outputs.version }}
+          path: artifacts/store
+
+      - name: Extend the release's checksums and notes with the Store package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build-test-and-release.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.build-test-and-release.outputs.version }}
+          STORE_VERSION: ${{ needs.build-test-and-release.outputs.store-version }}
+        run: .github/scripts/publish-store-assets.sh

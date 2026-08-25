@@ -216,7 +216,9 @@ Or run *Windows App Cert Kit* from the Start menu and choose **Validate Store Ap
 ## Upload to the Partner Center
 
 1. Partner Center → the SonicRelay app → **Submissions → Packages**.
-2. Upload the `.msixupload` produced by the release workflow.
+2. Upload the `.msixupload` produced by the release workflow. It is attached to the GitHub
+   Release for that version, next to the `.msi` and `.exe` installers; the same file is also
+   the `store-package-<version>` workflow artifact, which expires after 30 days.
 3. Confirm the page shows the expected package name, publisher, version and the `x64`
    architecture. A mismatch here means the identity in `store-identity.json` (or in the
    repository variables) is not the reserved one.
@@ -224,15 +226,23 @@ Or run *Windows App Cert Kit* from the Start menu and choose **Validate Store Ap
 ## CI
 
 - **`.github/workflows/ci.yml`** — the `package-release` job builds the MSIX after the build
-  and test jobs pass, on pushes to `main` and manual runs, and uploads it as the
-  `store-package-<version>` workflow artifact.
+  and test jobs pass, on pushes to `main` and manual runs, adds it to the release's
+  `checksums-sha256.txt` and notes, attaches it to the GitHub Release it publishes, and
+  uploads it as the `store-package-<version>` workflow artifact as well.
 - **`.github/workflows/release.yml`** — the `store-package` job runs after
   `build-test-and-release` succeeds, checks out the exact commit that was released, and
-  uploads the same artifact.
+  uploads the same artifact. The `store-release-assets` job then attaches that artifact to
+  the release through `.github/scripts/publish-store-assets.sh`. It waits for
+  `macos-package` because `linux-package`, `macos-package` and it all rewrite the same
+  release notes and the same canonical `checksums-sha256.txt`, so they have to run one
+  after the other.
 
-The Store package is intentionally **not** attached to the public GitHub Release: it is
-unsigned, so Windows will not install it, and the only thing it is good for is the Partner
-Center upload. Download it from the workflow run.
+The `.msix` and `.msixupload` on the release are **unsigned**, exactly as the Store requires,
+so Windows will not install the `.msix` by double-clicking it — it is not a substitute for the
+`.msi` or `.exe` installers. They are published so a Partner Center submission can be
+reproduced from the release at any time instead of from a workflow artifact that expires
+after 30 days. The `.appxsym` is not attached separately: it is already inside the
+`.msixupload`.
 
 ## Out of scope
 

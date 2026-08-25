@@ -44,6 +44,7 @@ $requiredPaths = @(
     'packaging/macos/SonicRelay.entitlements'
     '.github/scripts/import-macos-certificate.sh'
     '.github/scripts/publish-macos-assets.sh'
+    '.github/scripts/publish-store-assets.sh'
     'docs/microsoft-store-package.md'
     'packaging/windows/Build-MsixPackage.ps1'
     'packaging/windows/msix/AppxManifest.template.xml'
@@ -131,6 +132,7 @@ $requiredStoreTopics = @(
     'Remove-AppxPackage'
     'unsigned'
     'x64'
+    'publish-store-assets.sh'
 )
 $missingStoreTopics = $requiredStoreTopics | Where-Object {
     $storePackage.IndexOf($_, [StringComparison]::OrdinalIgnoreCase) -lt 0
@@ -368,6 +370,10 @@ if (Test-Path -LiteralPath $workflowPath) {
         'macOS packaging job' = '(?m)^\s*package-release-macos:\s*$'
         'Microsoft Store packaging test' = 'tests/Build-MsixPackage\.Tests\.ps1'
         'Microsoft Store MSIX build' = 'packaging/windows/Build-MsixPackage\.ps1'
+        # Same rule as the release workflow: the MSIX goes on the release, so the packages a
+        # Partner Center submission is made from outlive the workflow run.
+        'Microsoft Store package on the release' = '(?s)\$assetPaths = @\(.*?artifacts/store'
+        'Microsoft Store package in the checksums' = "(?s)checksums-sha256\.txt.*?'\.msix', '\.msixupload'"
     }
 
     $missingWorkflowRequirements = $requiredWorkflowPatterns.GetEnumerator() | Where-Object {
@@ -461,6 +467,10 @@ if (Test-Path -LiteralPath $releaseWorkflowPath) {
         'macOS asset publishing script' = '\.github/scripts/publish-macos-assets\.sh'
         'Microsoft Store packaging job' = '(?m)^\s*store-package:\s*$'
         'Microsoft Store MSIX build' = 'packaging/windows/Build-MsixPackage\.ps1'
+        # The Store package is an asset of the release, not just a workflow artifact that
+        # expires: a submission has to stay reproducible from the release itself.
+        'Microsoft Store release attachment job' = '(?m)^\s*store-release-assets:\s*$'
+        'Microsoft Store asset publishing script' = '\.github/scripts/publish-store-assets\.sh'
     }
 
     $missingReleaseWorkflowRequirements = $requiredReleaseWorkflowPatterns.GetEnumerator() | Where-Object {
