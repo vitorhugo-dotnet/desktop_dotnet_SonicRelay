@@ -95,6 +95,42 @@ public sealed class DuplexAudioTests
     }
 
     [Fact]
+    public async Task ASupersedingSessionAnnouncesItsOwnCapabilities()
+    {
+        // A session that ended without a clean `session.ended` is superseded by the next one's
+        // join. That is a new participant in a new session, and it needs its own
+        // announcement — the backend stored the previous one against a row that is gone.
+        var context = CreateContext();
+        await using var publisher = context.Publisher;
+        await JoinSelfAsync(publisher, duplex: true);
+        context.Signaling.Messages.Clear();
+
+        await publisher.HandleAsync(new(
+            SignalingMessageTypes.SessionJoined,
+            "session-2",
+            Payload: Participant("publisher-2", "publisher", duplex: true, audioSendAllowed: true, canSendAudio: true)));
+
+        var declared = Assert.Single(context.Signaling.Messages);
+        Assert.Equal(SignalingMessageTypes.ParticipantCapabilities, declared.Type);
+        Assert.Equal("session-2", declared.SessionId);
+    }
+
+    [Fact]
+    public async Task AReconnectedSocketDoesNotReAnnounce()
+    {
+        // Same session, same participant id: the backend already holds this state, and
+        // re-announcing on every reconnect would be noise on a path that is recovering.
+        var context = CreateContext();
+        await using var publisher = context.Publisher;
+        await JoinSelfAsync(publisher, duplex: true);
+        context.Signaling.Messages.Clear();
+
+        await JoinSelfAsync(publisher, duplex: true);
+
+        Assert.Empty(context.Signaling.Messages);
+    }
+
+    [Fact]
     public async Task ParticipantCapabilitiesAreRecordedAndSurfaced()
     {
         var context = CreateContext();

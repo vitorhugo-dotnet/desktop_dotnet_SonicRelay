@@ -364,7 +364,9 @@ public sealed class WebRtcPublisher : IWebRtcPublisher
         var firstSelfState = false;
         if (isSelf)
         {
-            firstSelfState = selfParticipantId is null;
+            // A different participant id is a different session (or a fresh join), which needs
+            // its own announcement — not just the very first one this process ever sees.
+            firstSelfState = !string.Equals(selfParticipantId, state.ParticipantId, StringComparison.Ordinal);
             selfParticipantId = state.ParticipantId;
             duplexSession = state.IsDuplexSession;
         }
@@ -500,6 +502,12 @@ public sealed class WebRtcPublisher : IWebRtcPublisher
             PublishDiagnostics();
         }
         activeSessionId = sessionId;
+        // The previous session's participants — and this device's identity in it — say nothing
+        // about the new one. Keeping them would also suppress the capability announcement the
+        // new session still needs, since that only fires on this device's first state in it.
+        lock (participants) participants.Clear();
+        selfParticipantId = null;
+        duplexSession = false;
     }
 
     private void ValidateSession(SignalingMessageEnvelope message)
