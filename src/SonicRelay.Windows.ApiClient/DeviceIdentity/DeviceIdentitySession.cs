@@ -148,6 +148,28 @@ public sealed class DeviceIdentitySession : IDeviceAccessTokenProvider, IDisposa
                 throw;
             }
 
+            if (!string.IsNullOrWhiteSpace(token.RotatedCredentialSecret))
+            {
+                if (token.DeviceId == Guid.Empty || token.CredentialVersion <= 0)
+                {
+                    throw new ApiClientException(
+                        ApiErrorKind.Unknown,
+                        "The backend returned an invalid rotated device identity.");
+                }
+
+                var rotatedCredential = new DeviceCredential(
+                    token.DeviceId,
+                    token.RotatedCredentialSecret,
+                    token.CredentialVersion,
+                    credential.DeviceType,
+                    credential.Platform);
+                var save = await credentialStore.SaveAsync(rotatedCredential, cancellationToken);
+                if (!save.Succeeded)
+                {
+                    throw StorageFailure("saved");
+                }
+            }
+
             var snapshot = new CachedAccessToken(token.AccessToken, token.ExpiresAt);
             Volatile.Write(ref cachedAccessToken, snapshot);
             return snapshot.Value;

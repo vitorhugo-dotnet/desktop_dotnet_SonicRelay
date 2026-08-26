@@ -45,6 +45,31 @@ public sealed class DeviceIdentitySessionTests
     }
 
     [Fact]
+    public async Task Rotated_identity_is_persisted_before_the_access_token_is_exposed()
+    {
+        var rotatedId = Guid.Parse("00000000-0000-0000-0000-000000000099");
+        var store = new MemoryDeviceCredentialStore(StoredCredential());
+        var api = new StubDeviceIdentityApiClient
+        {
+            TokenResponse = new DeviceTokenResponse(
+                "rotated-access",
+                Now.AddMinutes(5),
+                ["device:read"],
+                rotatedId,
+                4,
+                "rotated-secret")
+        };
+        var session = CreateSession(api, store, new FakeTimeProvider(Now));
+
+        var token = await session.GetAccessTokenAsync();
+
+        Assert.Equal("rotated-access", token);
+        Assert.Equal(
+            new DeviceCredential(rotatedId, "rotated-secret", 4, "windows_publisher", "windows"),
+            store.Credential);
+    }
+
+    [Fact]
     public async Task Refreshes_when_cached_token_reaches_the_thirty_second_expiry_margin()
     {
         var time = new FakeTimeProvider(Now);
@@ -342,6 +367,22 @@ public sealed class DeviceIdentitySessionTests
         Assert.Equal("access-1", token.AccessToken);
         Assert.Equal(new DateTimeOffset(2026, 7, 29, 12, 5, 0, TimeSpan.Zero), token.ExpiresAt);
         Assert.Equal(["session:create"], token.Scopes);
+    }
+
+    [Fact]
+    public async Task Api_client_preserves_rotated_identity_fields_from_token_response()
+    {
+        var rotatedId = Guid.Parse("00000000-0000-0000-0000-000000000099");
+        var handler = new FakeHttpMessageHandler((_, _) => Task.FromResult(
+            FakeHttpMessageHandler.Json(HttpStatusCode.OK,
+                $$"""{"accessToken":"rotated-access","expiresAt":"2026-07-29T12:05:00Z","scopes":["device:read"],"deviceId":"{{rotatedId}}","credentialVersion":4,"rotatedCredentialSecret":"rotated-secret"}""")));
+        var client = new DeviceIdentityApiClient(TestClient.Create(handler));
+
+        var token = await client.TokenAsync(new DeviceTokenRequest(DeviceId, "old-secret"));
+
+        Assert.Equal(rotatedId, token.DeviceId);
+        Assert.Equal(4, token.CredentialVersion);
+        Assert.Equal("rotated-secret", token.RotatedCredentialSecret);
     }
 
     private static DeviceIdentitySession CreateSession(

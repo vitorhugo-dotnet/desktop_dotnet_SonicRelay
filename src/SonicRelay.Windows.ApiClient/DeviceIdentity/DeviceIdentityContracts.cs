@@ -20,4 +20,7 @@ public sealed record DeviceTokenRequest(Guid DeviceId, string CredentialSecret);
 public sealed record DeviceTokenResponse(
     string AccessToken,
     DateTimeOffset ExpiresAt,
-    IReadOnlyList<string> Scopes);
+    IReadOnlyList<string> Scopes,
+    Guid DeviceId = default,
+    int CredentialVersion = 0,
+    string? RotatedCredentialSecret = null);
