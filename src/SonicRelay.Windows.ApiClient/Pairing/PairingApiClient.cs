@@ -15,7 +15,8 @@ public sealed class PairingApiClient(
             "/api/pairings/challenges",
             null,
             authenticated: true,
-            cancellationToken);
+            cancellationToken,
+            replaySafe: true);
 
     public async Task<IReadOnlyList<PairingResponse>> ListPairingsAsync(
         Guid deviceId,

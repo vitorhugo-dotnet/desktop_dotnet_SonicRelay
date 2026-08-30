@@ -7,6 +7,30 @@ namespace SonicRelay.Windows.ApiClient.Tests;
 public sealed class PairingApiClientTests
 {
     [Fact]
+    public async Task Create_challenge_refreshes_the_device_token_and_retries_after_unauthorized()
+    {
+        var tokens = new SequenceAccessTokenProvider("expired-token", "fresh-token");
+        var bearerTokens = new List<string?>();
+        var challengeId = Guid.Parse("00000000-0000-0000-0000-000000000105");
+        var handler = new FakeHttpMessageHandler((request, _) =>
+        {
+            bearerTokens.Add(request.Headers.Authorization?.Parameter);
+            return Task.FromResult(bearerTokens.Count == 1
+                ? new HttpResponseMessage(HttpStatusCode.Unauthorized)
+                : FakeHttpMessageHandler.Json(
+                    HttpStatusCode.Created,
+                    $$"""{"challengeId":"{{challengeId}}","code":"PAIR42","qrPayload":"opaque-payload","expiresAt":"2026-07-29T12:10:00Z"}"""));
+        });
+        var client = new PairingApiClient(TestClient.Create(handler), tokens);
+
+        var challenge = await client.CreatePairingChallengeAsync();
+
+        Assert.Equal(challengeId, challenge.ChallengeId);
+        Assert.Equal(["expired-token", "fresh-token"], bearerTokens);
+        Assert.Equal([false, true], tokens.ForceRefreshCalls);
+    }
+
+    [Fact]
     public async Task Pairing_operations_use_device_bearer_and_documented_routes()
     {
         var deviceId = Guid.Parse("00000000-0000-0000-0000-000000000101");
@@ -47,5 +71,19 @@ public sealed class PairingApiClientTests
         public Task<string> GetAccessTokenAsync(
             bool forceRefresh = false,
             CancellationToken cancellationToken = default) => Task.FromResult("device-access");
+    }
+
+    private sealed class SequenceAccessTokenProvider(params string[] tokens) : IDeviceAccessTokenProvider
+    {
+        private readonly Queue<string> tokens = new(tokens);
+        public List<bool> ForceRefreshCalls { get; } = [];
+
+        public Task<string> GetAccessTokenAsync(
+            bool forceRefresh = false,
+            CancellationToken cancellationToken = default)
+        {
+            ForceRefreshCalls.Add(forceRefresh);
+            return Task.FromResult(tokens.Count > 1 ? tokens.Dequeue() : tokens.Peek());
+        }
     }
 }
