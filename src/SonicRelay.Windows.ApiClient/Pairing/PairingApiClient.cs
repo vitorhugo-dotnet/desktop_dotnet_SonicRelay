@@ -4,7 +4,8 @@ namespace SonicRelay.Windows.ApiClient.Pairing;
 
 public sealed class PairingApiClient(
     HttpClient httpClient,
-    IDeviceAccessTokenProvider accessTokenProvider) : IPairingApiClient
+    IDeviceAccessTokenProvider accessTokenProvider,
+    Func<Guid>? currentDeviceId = null) : IPairingApiClient
 {
     private readonly ApiHttpClient api = new(httpClient, accessTokenProvider);
 
@@ -23,7 +24,7 @@ public sealed class PairingApiClient(
         CancellationToken cancellationToken = default) =>
         await api.SendAsync<List<PairingResponse>>(
             HttpMethod.Get,
-            $"/api/devices/{deviceId:D}/pairings",
+            () => $"/api/devices/{(currentDeviceId?.Invoke() ?? deviceId):D}/pairings",
             null,
             authenticated: true,
             cancellationToken,

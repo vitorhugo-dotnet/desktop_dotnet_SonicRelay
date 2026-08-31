@@ -244,7 +244,7 @@ public sealed class PublisherRuntime : IAsyncDisposable
         }
 
         Pairing = new PairingViewModel(
-            new PairingApiClient(httpClient, deviceIdentitySession),
+            new PairingApiClient(httpClient, deviceIdentitySession, () => deviceIdentitySession.CurrentDeviceId),
             new PairingQrCodeService(),
             deviceId);
     }

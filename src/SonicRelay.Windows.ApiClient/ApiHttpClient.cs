@@ -27,9 +27,19 @@ internal sealed class ApiHttpClient
         bool authenticated,
         CancellationToken cancellationToken,
         bool replaySafe = false)
+        => await SendAsync<TResponse>(method, () => path, body, authenticated, cancellationToken, replaySafe);
+
+    public async Task<TResponse> SendAsync<TResponse>(
+        HttpMethod method,
+        Func<string> path,
+        object? body,
+        bool authenticated,
+        CancellationToken cancellationToken,
+        bool replaySafe = false)
     {
+        ArgumentNullException.ThrowIfNull(path);
         var authentication = await ResolveAuthenticationAsync(authenticated, cancellationToken);
-        using var response = await SendOnceAsync(method, path, body, authentication.AccessToken, cancellationToken);
+        using var response = await SendOnceAsync(method, path(), body, authentication.AccessToken, cancellationToken);
 
         var replay = await ResolveReplayAsync(
             response.StatusCode,
@@ -38,7 +48,7 @@ internal sealed class ApiHttpClient
             cancellationToken);
         if (replay.ShouldReplay)
         {
-            using var retry = await SendOnceAsync(method, path, body, replay.AccessToken, cancellationToken);
+            using var retry = await SendOnceAsync(method, path(), body, replay.AccessToken, cancellationToken);
             return await ReadAsync<TResponse>(retry, cancellationToken);
         }
 

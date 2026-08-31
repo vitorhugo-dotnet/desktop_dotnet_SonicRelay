@@ -17,6 +17,7 @@ public sealed class DeviceIdentitySession : IDeviceAccessTokenProvider, IDisposa
     private readonly object sync = new();
     private readonly CancellationTokenSource lifetimeCancellation = new();
     private CachedAccessToken? cachedAccessToken;
+    private Guid currentDeviceId;
     private TokenExchange? tokenExchange;
     private int identityInvalidated;
     private int disposed;
@@ -56,6 +57,20 @@ public sealed class DeviceIdentitySession : IDeviceAccessTokenProvider, IDisposa
         }
 
         return await exchange.WaitAsync(cancellationToken);
+    }
+
+    /// <summary>The device identity associated with the most recently exchanged access token.</summary>
+    public Guid CurrentDeviceId
+    {
+        get
+        {
+            lock (sync)
+            {
+                if (currentDeviceId == Guid.Empty)
+                    throw new InvalidOperationException("The device identity has not been initialized.");
+                return currentDeviceId;
+            }
+        }
     }
 
     public void Dispose()
@@ -171,7 +186,11 @@ public sealed class DeviceIdentitySession : IDeviceAccessTokenProvider, IDisposa
             }
 
             var snapshot = new CachedAccessToken(token.AccessToken, token.ExpiresAt);
-            Volatile.Write(ref cachedAccessToken, snapshot);
+            lock (sync)
+            {
+                currentDeviceId = token.DeviceId;
+                Volatile.Write(ref cachedAccessToken, snapshot);
+            }
             return snapshot.Value;
         }
         finally

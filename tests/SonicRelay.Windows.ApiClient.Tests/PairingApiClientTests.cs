@@ -31,6 +31,34 @@ public sealed class PairingApiClientTests
     }
 
     [Fact]
+    public async Task Listing_pairings_retries_against_the_rotated_device_identity()
+    {
+        var oldDeviceId = Guid.Parse("00000000-0000-0000-0000-000000000101");
+        var rotatedDeviceId = Guid.Parse("00000000-0000-0000-0000-000000000102");
+        var provider = new RotatingDeviceIdentityProvider(oldDeviceId, rotatedDeviceId);
+        var requestedPaths = new List<string>();
+        var handler = new FakeHttpMessageHandler((request, _) =>
+        {
+            requestedPaths.Add(request.RequestUri!.AbsolutePath);
+            return Task.FromResult(requestedPaths.Count == 1
+                ? new HttpResponseMessage(HttpStatusCode.Unauthorized)
+                : FakeHttpMessageHandler.Json(HttpStatusCode.OK, "[]"));
+        });
+        var client = new PairingApiClient(
+            TestClient.Create(handler),
+            provider,
+            () => provider.DeviceId);
+
+        await client.ListPairingsAsync(oldDeviceId);
+
+        Assert.Equal(
+        [
+            $"/api/devices/{oldDeviceId:D}/pairings",
+            $"/api/devices/{rotatedDeviceId:D}/pairings"
+        ], requestedPaths);
+    }
+
+    [Fact]
     public async Task Pairing_operations_use_device_bearer_and_documented_routes()
     {
         var deviceId = Guid.Parse("00000000-0000-0000-0000-000000000101");
@@ -84,6 +112,20 @@ public sealed class PairingApiClientTests
         {
             ForceRefreshCalls.Add(forceRefresh);
             return Task.FromResult(tokens.Count > 1 ? tokens.Dequeue() : tokens.Peek());
+        }
+    }
+
+    private sealed class RotatingDeviceIdentityProvider(Guid initialDeviceId, Guid rotatedDeviceId)
+        : IDeviceAccessTokenProvider
+    {
+        public Guid DeviceId { get; private set; } = initialDeviceId;
+
+        public Task<string> GetAccessTokenAsync(
+            bool forceRefresh = false,
+            CancellationToken cancellationToken = default)
+        {
+            if (forceRefresh) DeviceId = rotatedDeviceId;
+            return Task.FromResult(forceRefresh ? "rotated-token" : "expired-token");
         }
     }
 }
