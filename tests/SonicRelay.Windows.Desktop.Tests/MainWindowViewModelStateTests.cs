@@ -6,6 +6,7 @@ using SonicRelay.Windows.Core.Configuration;
 using SonicRelay.Windows.Core.Storage.DeviceIdentity;
 using SonicRelay.Windows.Desktop.ViewModels;
 using SonicRelay.Windows.Presentation;
+using SonicRelay.Windows.Presentation.Pairing;
 using SonicRelay.Windows.Signaling;
 
 namespace SonicRelay.Windows.Desktop.Tests;
@@ -148,6 +149,68 @@ public sealed class MainWindowViewModelStateTests
         Assert.Equal(PageKey.Dashboard, vm.CurrentPage);
     }
 
+    [AvaloniaFact]
+    public async Task Rebootstrap_replaces_the_pairing_view_model_exposed_to_the_shell()
+    {
+        var deviceIdentityApi = new FakeDeviceIdentityApiClient();
+        await using var runtime = PublisherRuntime.Create(
+            new Uri("https://backend.example.test/"), new FakeAudio(),
+            credentialStoreOverride: new InMemoryFakeDeviceCredentialStore(),
+            relayPreferenceOverride: CreateTempRelayPreference(),
+            deviceIdentityApiClientOverride: deviceIdentityApi);
+        var vm = new MainWindowViewModel();
+        vm.Attach(runtime);
+
+        await runtime.InitializeDeviceIdentityAsync();
+        Dispatcher.UIThread.RunJobs();
+        var firstPairing = Assert.IsType<PairingViewModel>(vm.Pairing);
+        Assert.Same(runtime.Pairing, firstPairing);
+
+        await vm.UnpairAsync();
+        await vm.UnpairAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        var replacementPairing = Assert.IsType<PairingViewModel>(vm.Pairing);
+        Assert.Same(runtime.Pairing, replacementPairing);
+        Assert.NotSame(firstPairing, replacementPairing);
+    }
+
+    [AvaloniaFact]
+    public async Task Rebootstrap_removes_the_old_pairing_view_model_while_identity_is_pending()
+    {
+        var deviceIdentityApi = new FakeDeviceIdentityApiClient();
+        await using var runtime = PublisherRuntime.Create(
+            new Uri("https://backend.example.test/"), new FakeAudio(),
+            credentialStoreOverride: new InMemoryFakeDeviceCredentialStore(),
+            relayPreferenceOverride: CreateTempRelayPreference(),
+            deviceIdentityApiClientOverride: deviceIdentityApi);
+        var vm = new MainWindowViewModel();
+        vm.Attach(runtime);
+        await runtime.InitializeDeviceIdentityAsync();
+        Dispatcher.UIThread.RunJobs();
+        Assert.NotNull(vm.Pairing);
+
+        var pendingBootstrap = new TaskCompletionSource<BootstrapDeviceResponse>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        deviceIdentityApi.PendingBootstrap = pendingBootstrap;
+        deviceIdentityApi.BootstrapStarted = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        await vm.UnpairAsync();
+        var rebootstrap = vm.UnpairAsync();
+        await deviceIdentityApi.BootstrapStarted.Task;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(runtime.Pairing);
+        Assert.Null(vm.Pairing);
+
+        pendingBootstrap.SetResult(
+            new BootstrapDeviceResponse(Guid.NewGuid(), "replacement-secret", 1));
+        await rebootstrap;
+        Dispatcher.UIThread.RunJobs();
+        Assert.Same(runtime.Pairing, vm.Pairing);
+        Assert.NotNull(vm.Pairing);
+    }
+
     [Fact]
     public void Unpair_requires_a_confirmation_before_it_acts()
     {
@@ -228,9 +291,19 @@ public sealed class MainWindowViewModelStateTests
     /// device-identity bootstrap be driven to a genuine success in a test.</summary>
     private sealed class FakeDeviceIdentityApiClient : IDeviceIdentityApiClient
     {
+        public TaskCompletionSource<BootstrapDeviceResponse>? PendingBootstrap { get; set; }
+        public TaskCompletionSource? BootstrapStarted { get; set; }
+
         public Task<BootstrapDeviceResponse> BootstrapAsync(
-            BootstrapDeviceRequest request, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new BootstrapDeviceResponse(Guid.NewGuid(), "device-secret", 1));
+            BootstrapDeviceRequest request, CancellationToken cancellationToken = default)
+        {
+            if (PendingBootstrap is not { } pending)
+                return Task.FromResult(new BootstrapDeviceResponse(Guid.NewGuid(), "device-secret", 1));
+
+            PendingBootstrap = null;
+            BootstrapStarted?.SetResult();
+            return pending.Task;
+        }
 
         public Task<DeviceTokenResponse> TokenAsync(
             DeviceTokenRequest request, CancellationToken cancellationToken = default) =>

@@ -250,6 +250,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         if (workflow is not null) workflow.StateChanged -= OnStateChanged;
         if (webRtc is not null) webRtc.DiagnosticsChanged -= OnDiagnosticsChanged;
+        if (runtime is not null) runtime.PairingChanged -= OnPairingChanged;
 
         runtime = next;
         workflow = next?.Workflow;
@@ -257,6 +258,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         if (workflow is not null) workflow.StateChanged += OnStateChanged;
         if (webRtc is not null) webRtc.DiagnosticsChanged += OnDiagnosticsChanged;
+        if (runtime is not null) runtime.PairingChanged += OnPairingChanged;
 
         Settings = next is null
             ? new SettingsViewModel()
@@ -274,6 +276,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private void OnStateChanged(PublisherSnapshot state) => Dispatch(() => { snapshot = state; Rebuild(); });
     private void OnDiagnosticsChanged(WebRtcPublisherDiagnostics _) => Dispatch(Rebuild);
+    private void OnPairingChanged() => Dispatch(Rebuild);
 
     private void Rebuild() =>
         Apply(snapshot, webRtc?.Diagnostics, runtime?.RelayPreference.ForceRelay ?? false);
