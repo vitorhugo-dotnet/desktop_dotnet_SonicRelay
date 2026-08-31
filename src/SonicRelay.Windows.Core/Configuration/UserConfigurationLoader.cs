@@ -25,7 +25,11 @@ public sealed class UserConfigurationLoader
         if (!File.Exists(_path))
         {
             Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-            var template = new ConfigurationDocument("https://localhost:5001/", "wss://localhost:5001/ws/signaling", 4, false);
+            var template = new ConfigurationDocument(
+                "https://sonicrelay-api.hugodotnet.dev/",
+                "wss://sonicrelay-api.hugodotnet.dev/ws/signaling",
+                4,
+                false);
             await File.WriteAllTextAsync(_path, JsonSerializer.Serialize(template, JsonOptions), cancellationToken);
         }
 
@@ -110,4 +114,3 @@ public sealed class UserConfigurationLoader
         int DefaultMaxViewers,
         bool DevelopmentMode);
 }
-

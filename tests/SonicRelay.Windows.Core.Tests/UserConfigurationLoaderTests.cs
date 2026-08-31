@@ -23,6 +23,17 @@ public sealed class UserConfigurationLoaderTests : IDisposable
         Assert.True(result.DevelopmentMode);
     }
 
+    [Fact]
+    public async Task LoadAsyncCreatesProductionConfigurationForANewInstallation()
+    {
+        var path = Path.Combine(_directory, "appsettings.json");
+
+        var result = await new UserConfigurationLoader(path).LoadAsync();
+
+        Assert.Equal(new Uri("https://sonicrelay-api.hugodotnet.dev/"), result.BackendBaseUrl);
+        Assert.Equal(new Uri("wss://sonicrelay-api.hugodotnet.dev/ws/signaling"), result.SignalingBaseUrl);
+    }
+
     [Theory]
     [InlineData("not-a-url", "wss://signal.example.test/", 1)]
     [InlineData("file:///tmp/api", "wss://signal.example.test/", 1)]
@@ -76,4 +87,3 @@ public sealed class UserConfigurationLoaderTests : IDisposable
         if (Directory.Exists(_directory)) Directory.Delete(_directory, true);
     }
 }
-
