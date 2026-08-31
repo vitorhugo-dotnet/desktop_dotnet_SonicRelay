@@ -87,6 +87,7 @@ public sealed class PublisherRuntime : IAsyncDisposable
     public DiagnosticReportExporter ReportExporter { get; }
     public IWebRtcPublisher WebRtcPublisher => webRtcPublisher;
     public PairingViewModel? Pairing { get; private set; }
+    public event Action? PairingChanged;
 
     /// <summary>Whether this platform composition can play back what other participants send.</summary>
     public bool SupportsTwoWayAudio => playback is not null;
@@ -237,16 +238,24 @@ public sealed class PublisherRuntime : IAsyncDisposable
 
     public async Task InitializeDeviceIdentityAsync(CancellationToken cancellationToken = default)
     {
+        SetPairing(null);
         await Workflow.InitializeDeviceIdentityAsync(cancellationToken);
         if (Workflow.State.DeviceId is not { } deviceId)
         {
             return;
         }
 
-        Pairing = new PairingViewModel(
+        SetPairing(new PairingViewModel(
             new PairingApiClient(httpClient, deviceIdentitySession, () => deviceIdentitySession.CurrentDeviceId),
             new PairingQrCodeService(),
-            deviceId);
+            deviceId));
+    }
+
+    private void SetPairing(PairingViewModel? value)
+    {
+        if (ReferenceEquals(Pairing, value)) return;
+        Pairing = value;
+        PairingChanged?.Invoke();
     }
 
     private void OnWorkflowStateChanged(PublisherSnapshot state)
