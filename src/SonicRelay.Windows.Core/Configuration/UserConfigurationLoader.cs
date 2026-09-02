@@ -4,6 +4,11 @@ namespace SonicRelay.Windows.Core.Configuration;
 
 public sealed class UserConfigurationLoader
 {
+    private const string ProductionBackendUrl = "https://sonicrelay-api.hugodotnet.dev/";
+    private const string ProductionSignalingUrl = "wss://sonicrelay-api.hugodotnet.dev/ws/signaling";
+    private const string LegacyBackendUrl = "https://localhost:5001/";
+    private const string LegacySignalingUrl = "wss://localhost:5001/ws/signaling";
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true
@@ -26,8 +31,8 @@ public sealed class UserConfigurationLoader
         {
             Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
             var template = new ConfigurationDocument(
-                "https://sonicrelay-api.hugodotnet.dev/",
-                "wss://sonicrelay-api.hugodotnet.dev/ws/signaling",
+                ProductionBackendUrl,
+                ProductionSignalingUrl,
                 4,
                 false);
             await File.WriteAllTextAsync(_path, JsonSerializer.Serialize(template, JsonOptions), cancellationToken);
@@ -35,9 +40,23 @@ public sealed class UserConfigurationLoader
 
         try
         {
-            await using var stream = File.OpenRead(_path);
-            var document = await JsonSerializer.DeserializeAsync<ConfigurationDocument>(stream, JsonOptions, cancellationToken)
-                ?? throw new ConfigurationValidationException("Configuration file is empty.");
+            ConfigurationDocument document;
+            await using (var stream = File.OpenRead(_path))
+            {
+                document = await JsonSerializer.DeserializeAsync<ConfigurationDocument>(stream, JsonOptions, cancellationToken)
+                    ?? throw new ConfigurationValidationException("Configuration file is empty.");
+            }
+
+            if (IsLegacyDefaultConfiguration(document))
+            {
+                document = document with
+                {
+                    BackendBaseUrl = ProductionBackendUrl,
+                    SignalingBaseUrl = ProductionSignalingUrl
+                };
+                await File.WriteAllTextAsync(_path, JsonSerializer.Serialize(document, JsonOptions), cancellationToken);
+            }
+
             var configuration = new PublisherConfiguration(
                 ParseUri(document.BackendBaseUrl, "BackendBaseUrl"),
                 ParseUri(document.SignalingBaseUrl, "SignalingBaseUrl"),
@@ -107,6 +126,11 @@ public sealed class UserConfigurationLoader
 
         return uri;
     }
+
+    private static bool IsLegacyDefaultConfiguration(ConfigurationDocument document) =>
+        !document.DevelopmentMode &&
+        string.Equals(document.BackendBaseUrl, LegacyBackendUrl, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(document.SignalingBaseUrl, LegacySignalingUrl, StringComparison.OrdinalIgnoreCase);
 
     private sealed record ConfigurationDocument(
         string? BackendBaseUrl,
