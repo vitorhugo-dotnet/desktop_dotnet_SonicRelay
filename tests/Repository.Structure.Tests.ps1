@@ -133,6 +133,13 @@ $requiredStoreTopics = @(
     'unsigned'
     'x64'
     'publish-store-assets.sh'
+    'Microsoft Store Developer CLI'
+    'MS_STORE_TENANT_ID'
+    'MS_STORE_SELLER_ID'
+    'MS_STORE_CLIENT_ID'
+    'MS_STORE_CLIENT_SECRET'
+    'MS_STORE_PRODUCT_ID'
+    'first Store publication'
 )
 $missingStoreTopics = $requiredStoreTopics | Where-Object {
     $storePackage.IndexOf($_, [StringComparison]::OrdinalIgnoreCase) -lt 0
@@ -518,6 +525,13 @@ if (Test-Path -LiteralPath $releaseWorkflowPath) {
         # expires: a submission has to stay reproducible from the release itself.
         'Microsoft Store release attachment job' = '(?m)^\s*store-release-assets:\s*$'
         'Microsoft Store asset publishing script' = '\.github/scripts/publish-store-assets\.sh'
+        'Microsoft Store publication job' = '(?m)^\s*microsoft-store-publish:\s*$'
+        'official Microsoft Store CLI action' = 'microsoft/microsoft-store-apppublisher@v1\.1'
+        'Store publication downloads the original artifact' = '(?s)microsoft-store-publish:.*?actions/download-artifact@v4.*?store-package-\$\{\{\s*needs\.build-test-and-release\.outputs\.version\s*\}\}'
+        'Store publication only runs for stable tags' = '(?s)microsoft-store-publish:.*?github\.ref_type\s*==\s*''tag''.*?prerelease\s*==\s*''false'''
+        'Store publication reads credentials from secrets' = '(?s)microsoft-store-publish:.*?secrets\.MS_STORE_TENANT_ID.*?secrets\.MS_STORE_SELLER_ID.*?secrets\.MS_STORE_CLIENT_ID.*?secrets\.MS_STORE_CLIENT_SECRET'
+        'Store publication reads product ID from variable' = '(?s)microsoft-store-publish:.*?vars\.MS_STORE_PRODUCT_ID'
+        'Store publication submits MSIX input' = '(?s)microsoft-store-publish:.*?msstore publish.*?--inputFile'
     }
 
     $missingReleaseWorkflowRequirements = $requiredReleaseWorkflowPatterns.GetEnumerator() | Where-Object {

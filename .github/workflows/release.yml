@@ -328,6 +328,57 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  microsoft-store-publish:
+    name: Publish to Microsoft Store
+    # A Store submission is an update only: the first submission must be completed and live
+    # in Partner Center manually before this job can publish a subsequent stable release.
+    needs: [build-test-and-release, store-package]
+    if: github.ref_type == 'tag' && needs.build-test-and-release.outputs.prerelease == 'false'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      MS_STORE_TENANT_ID: ${{ secrets.MS_STORE_TENANT_ID }}
+      MS_STORE_SELLER_ID: ${{ secrets.MS_STORE_SELLER_ID }}
+      MS_STORE_CLIENT_ID: ${{ secrets.MS_STORE_CLIENT_ID }}
+      MS_STORE_CLIENT_SECRET: ${{ secrets.MS_STORE_CLIENT_SECRET }}
+
+    steps:
+      - name: Download the Microsoft Store package
+        uses: actions/download-artifact@v4
+        with:
+          name: store-package-${{ needs.build-test-and-release.outputs.version }}
+          path: artifacts/store
+
+      - name: Set up Microsoft Store Developer CLI
+        uses: microsoft/microsoft-store-apppublisher@v1.1
+
+      - name: Configure Microsoft Store Developer CLI
+        shell: pwsh
+        run: >-
+          msstore reconfigure
+          --tenantId "$env:MS_STORE_TENANT_ID"
+          --sellerId "$env:MS_STORE_SELLER_ID"
+          --clientId "$env:MS_STORE_CLIENT_ID"
+          --clientSecret "$env:MS_STORE_CLIENT_SECRET"
+
+      - name: Resolve Microsoft Store MSIX
+        id: msix
+        shell: pwsh
+        run: |
+          $packages = @(Get-ChildItem -LiteralPath '${{ github.workspace }}/artifacts/store' -Filter '*.msix' -Recurse -File)
+          if ($packages.Count -ne 1) {
+            throw "Expected exactly one Microsoft Store MSIX artifact, found $($packages.Count)."
+          }
+
+          "path=$($packages[0].FullName)" >> $env:GITHUB_OUTPUT
+
+      - name: Publish MSIX to Microsoft Store
+        shell: pwsh
+        run: >-
+          msstore publish "${{ github.workspace }}"
+          --inputFile "${{ steps.msix.outputs.path }}"
+          -id "${{ vars.MS_STORE_PRODUCT_ID }}"
+
   linux-package:
     name: Package Linux release assets
     needs: build-test-and-release
