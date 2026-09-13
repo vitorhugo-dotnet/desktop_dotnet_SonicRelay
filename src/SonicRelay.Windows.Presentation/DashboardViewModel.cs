@@ -71,12 +71,12 @@ public sealed record DashboardViewModel
             IsCapturing = snapshot.AudioState is AudioCaptureState.Capturing,
             AudioPeak = level.Peak,
             AudioRms = level.Rms,
-            LatencyText = rtt is { } value ? $"{value.TotalMilliseconds:F0} ms" : Unknown,
+            LatencyText = rtt is { } value ? string.Format(CultureInfo.InvariantCulture, "{0:F0} ms", value.TotalMilliseconds) : Unknown,
             // Latency (RTT), jitter and packet loss all come from the connected viewer's RTCP
             // reports (issue #32); each reads as unknown until the first report correlates.
             // Bitrate is the negotiated Opus send bitrate.
-            JitterText = reception is { } r ? $"{r.Jitter.TotalMilliseconds:F0} ms" : Unknown,
-            PacketLossText = reception is { } r2 ? $"{r2.PacketLossPercent:F1} %" : Unknown,
+            JitterText = reception is { } r ? string.Format(CultureInfo.InvariantCulture, "{0:F0} ms", r.Jitter.TotalMilliseconds) : Unknown,
+            PacketLossText = reception is { } r2 ? string.Format(CultureInfo.InvariantCulture, "{0:F1} %", r2.PacketLossPercent) : Unknown,
             BitrateText = send is { } s ? $"{s.OpusBitrateKbps} kbps" : Unknown,
         };
     }

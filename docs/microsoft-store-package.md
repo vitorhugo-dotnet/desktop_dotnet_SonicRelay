@@ -247,6 +247,34 @@ Or run *Windows App Cert Kit* from the Start menu and choose **Validate Store Ap
    architecture. A mismatch here means the identity in `store-identity.json` (or in the
    repository variables) is not the reserved one.
 
+## Automated Microsoft Store publishing
+
+The first Store publication must be submitted and become live through Partner Center manually.
+Only after that initial certification can the release workflow publish subsequent stable updates
+automatically with the [Microsoft Store Developer CLI](https://learn.microsoft.com/windows/apps/publish/msstore-dev-cli/github-actions).
+
+For the automation, associate an Entra tenant with the Partner Center account, register an Entra
+application, create its client secret, and add that application in Partner Center with the
+**Manager** role for the SonicRelay submission. Configure these GitHub Actions secrets from those
+values:
+
+| GitHub Actions secret | Where to obtain it |
+| --- | --- |
+| `MS_STORE_TENANT_ID` | Microsoft Entra ID tenant overview |
+| `MS_STORE_SELLER_ID` | Partner Center account settings / seller profile |
+| `MS_STORE_CLIENT_ID` | Microsoft Entra application registration overview |
+| `MS_STORE_CLIENT_SECRET` | Value of the client secret created for that application |
+
+Set `MS_STORE_PRODUCT_ID` as a GitHub Actions repository variable, using the product ID under the
+SonicRelay app's **Partner Center → Product identity** page. It is product metadata, not a
+credential. Never commit any of the four secrets or print them in workflow logs.
+
+On a pushed stable `v*` tag, `release.yml` downloads the `store-package-<version>` artifact made
+by `store-package`, resolves its `.msix`, configures the official `msstore` CLI with those secrets,
+and submits that exact artifact. Manual releases and prereleases do not run this job. If submission
+fails, the GitHub Release and its assets remain available; rerunning only the Store job downloads
+the same artifact again instead of rebuilding the package.
+
 ## CI
 
 - **`.github/workflows/ci.yml`** — the `package-release` job builds the MSIX after the build
@@ -259,7 +287,8 @@ Or run *Windows App Cert Kit* from the Start menu and choose **Validate Store Ap
   the release through `.github/scripts/publish-store-assets.sh`. It waits for
   `macos-package` because `linux-package`, `macos-package` and it all rewrite the same
   release notes and the same canonical `checksums-sha256.txt`, so they have to run one
-  after the other.
+  after the other. Its independent `microsoft-store-publish` job uses the artifact to submit
+  stable tag releases after the first Store publication is live.
 
 The `.msix` and `.msixupload` on the release are **unsigned**, exactly as the Store requires,
 so Windows will not install the `.msix` by double-clicking it — it is not a substitute for the
