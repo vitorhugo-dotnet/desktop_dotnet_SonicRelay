@@ -1,6 +1,12 @@
 # SonicRelay Desktop
 
-SonicRelay Desktop is the desktop application responsible for capturing system audio on Windows, Linux, and macOS and publishing it to SonicRelay viewers with low latency. It is one part of the SonicRelay suite and will communicate with the separately maintained backend at [`vitorhugo-java/dotnet_SonicRelay`](https://github.com/vitorhugo-java/dotnet_SonicRelay).
+SonicRelay Desktop is the desktop application responsible for capturing system audio on Windows, Linux, and macOS and publishing it to SonicRelay viewers with low latency. It is one part of the SonicRelay product and communicates with the shared [RelayControl](https://github.com/vitorhugo-dotnet/dotnet_SonicRelay) backend/control plane.
+
+Related projects:
+
+- [SonicRelay Mobile](https://github.com/vitorhugo-dotnet/flutter_mobile-web_SonicRelay) — mobile audio viewer.
+- [RelayControl](https://github.com/vitorhugo-dotnet/dotnet_SonicRelay) — shared identity, pairing, sessions, signaling and TURN credentials.
+- [FrameRelay](https://github.com/vitorhugo-dotnet/dotnet_SonicDesktopRelay) — separate Windows screen-sharing product built on RelayControl.
 
 ## Non-admin support
 
@@ -46,7 +52,7 @@ The app is an unpackaged Avalonia executable. Select `SonicRelay.Windows.Desktop
 
 ## Download a release
 
-Open the repository's [Releases page](https://github.com/vitorhugo-java/windows_SonicRelay/releases) and download the asset that matches how you want to run it:
+Open the repository's [Releases page](https://github.com/vitorhugo-dotnet/desktop_dotnet_SonicRelay/releases) and download the asset that matches how you want to run it:
 
 - ZIP: extract it to a user-writable folder such as one under your profile and run `SonicRelay.Windows.App.exe` directly. Do not run it as administrator.
 - EXE: run the portable single-file executable directly as the current user.
